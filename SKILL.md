@@ -48,6 +48,24 @@ The HTML layer for your LLM-wiki.
    - Tags are LLM-emitted free-form taxonomy; group + filter on the index page.
    - Plain `sitemap.xml`. No client-side search in v0.
 
+## Design principle — coherence at the token level, freedom at the composition level
+
+The theme is a contract on coherence, not a cap on creativity.
+
+- **Tokens** — `--accent`, `--fg`, `--space-*`, `--font-sans`, etc. — are the shared
+  visual language. Every page references them. This is what makes a folder of 50
+  notes feel like one site.
+- **Base typography** — every standard HTML element (`h1`-`h6`, `p`, `ul`, `table`,
+  `code`, `details`, …) is styled regardless of class. Pure semantic HTML still
+  looks decent.
+- **Named patterns** — `.callout`, `.eyebrow`, `.index-card`, `.page--with-toc`,
+  etc. — are pre-baked moves for common shapes. Suggestions, not rules.
+
+When a pattern doesn't fit, the LLM is encouraged to invent — via a per-page
+`<style>` block or token-referencing inline styles. The render prompt (T3) carries
+this directive; the sanitizer (T4) allows `<style>` blocks and `style` attributes
+for the same reason. Coherence comes from tokens, not from class-name policing.
+
 ## Structure
 
 ```
