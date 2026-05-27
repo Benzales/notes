@@ -1,0 +1,15 @@
+/*
+ * md-to-redesigned-html default theme — Linear / Vercel docs aesthetic
+ *
+ * Owner: T2 (theme curation). This file is a scaffold; T2 hand-curates the full
+ * palette, type ramp, spacing scale, and component primitives.
+ *
+ * Direction (from design doc § "v0 Theme Strategy"):
+ *   - Typography: Inter or Geist Sans (body + headers); JetBrains Mono (code, UI labels)
+ *   - Palette: neutral grays (zinc/slate) + one bold accent (violet or electric blue)
+ *   - Layout: tight grid, sharp or ≤4px rounded corners, borders preferred over shadows
+ *   - Vibe: sharp, modern, technical, calm-precise — 2026 dev tool, not magazine
+ *   - Dark + light support
+ *
+ * NOT magazine, NOT editorial. See `~/notes/tariqs-demos/` for technique reference only.
+ */
