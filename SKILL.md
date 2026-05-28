@@ -30,23 +30,76 @@ The HTML layer for your LLM-wiki.
 
 2. **Per-file build**
    - For each `.md` in the source folder:
-     - **Skip if a sibling `<name>.html` already exists in source** — the HTML is
-       treated as authoritative (hand-authored or v1-edited). Mixed corpus OK.
+     - **Skip if a sibling `<name>.html` already exists in source** — the HTML
+       is treated as authoritative (hand-authored or v1-edited). Mixed corpus OK.
      - Read source.
-     - Apply `prompts/render.md` with source content + the CSS class vocabulary
-       extracted from `_design/system.css`.
-     - Claude emits a `<manifest>` block (title, summary, tags) and an `<html>` block.
-     - Run `bin/sanitize.ts` on the HTML.
-     - Write `./_site/<source-name>.html` + a sidecar JSON manifest.
+     - Apply `prompts/render.md` with source content + the design system CSS
+       as context.
+     - Claude emits a single `<html>` block containing the article body
+       (and optionally a per-page `<style>` block at the top).
+     - Pipe through `bin/sanitize.ts` to strip disallowed tags/attributes
+       (this also unwraps the outer `<html>` parse-marker, leaving the
+       article body).
+     - Wrap in the page shell (above). `{{TITLE}}` is extracted from the
+       rendered article's first `<h1>`.
+     - **Write to `_site/index.html` if the source name matches the landing
+       allowlist (see step 3); otherwise write to `_site/<source-name>.html`.**
    - For each `.html` in the source folder (sibling-of-skipped-md OR standalone):
-     - Copy as-is to `./_site/<source-name>.html` (do not re-render).
-     - Generate a sidecar manifest from the HTML content via one LLM call
-       (title + summary + tags only — no rewrite). Included in the index.
+     - Copy as-is. Same rename-on-write rule applies: if the filename matches
+       the landing allowlist, write to `_site/index.html`; otherwise
+       `_site/<source-name>.html`.
 
-3. **Index generation**
-   - Build `./_site/index.html` from all sidecar manifests (LLM-rendered + HTML-copied).
-   - Tags are LLM-emitted free-form taxonomy; group + filter on the index page.
-   - Plain `sitemap.xml`. No client-side search in v0.
+3. **Index handling** (Option A′ — rename-on-write with landing allowlist)
+
+   The skill detects the upstream tool's curated landing page by name and
+   promotes it to `_site/index.html` so it loads when a visitor opens `_site/`.
+
+   - **Landing allowlist** (first match wins, in order):
+     1. `index.md` / `index.html` — universal web convention
+     2. `README.md` / `README.html` — GitHub convention
+     3. `overview.md` / `overview.html` — `lucasastorian/llmwiki` convention
+     4. `home.md` / `home.html` — common wiki convention
+     5. `start.md` / `start.html` — alternate wiki convention
+   - If any source file matches, step 2 has already written its rendered
+     output to `_site/index.html`. No further action.
+   - If no source file matches, generate a fallback `_site/index.html`
+     listing every rendered page (titles extracted from each `<h1>`).
+     Simple list, no client-side filtering in v0.
+   - Either way, `_site/index.html` exists when the pipeline completes.
+   - No `sitemap.xml` in v0. No client-side search in v0.
+
+## Page shell — what wraps the LLM's `<article>` output
+
+The render prompt instructs the LLM to emit `<article>...</article>` only — no
+DOCTYPE, head, or body. The orchestrator (T6) wraps it in a fixed page shell
+when writing each `_site/<name>.html`:
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' data:; script-src 'none'; object-src 'none'; base-uri 'self'; frame-ancestors 'self';">
+<title>{{TITLE}}</title>
+<link rel="stylesheet" href="./_design/system.css">
+</head>
+<body>
+<main class="page">
+{{ARTICLE_HTML}}
+</main>
+</body>
+</html>
+```
+
+`{{TITLE}}` is extracted from the rendered HTML's first `<h1>`.
+`{{ARTICLE_HTML}}` is the sanitized output of `bin/sanitize.ts`.
+
+The CSP meta tag is the second defense layer (sanitize-html is the first).
+`script-src 'none'` means: even if a `<script>` slips past the sanitizer
+(mXSS, future CVE, prompt-injection bypass), the browser refuses to execute
+it. The rendered output has no JavaScript by design. `'unsafe-inline'` covers
+the `<style>` blocks and `style="..."` attributes the design contract allows.
 
 ## Design principle — coherence at the token level, freedom at the composition level
 

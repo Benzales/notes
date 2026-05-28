@@ -27,9 +27,9 @@ From within Claude Code. Output: `./folder/_site/`.
 ## What it does
 
 - **Init** (first run per folder): copies `themes/default.css` to `./_design/system.css`. Edit it freely; future runs respect your edits.
-- **Render**: one Claude invocation per source file. Emits a manifest block (title, summary, tags) + an HTML block per the render prompt.
+- **Render**: one Claude invocation per source file. Produces an HTML article body per the render prompt (no manifest in v0).
 - **Sanitize**: deterministic HTML sanitizer (`bin/sanitize.ts`) runs on every rendered file. Allowlist-based.
-- **Index**: builds `_site/index.html` grouped + filterable by LLM-emitted tags. Plain `sitemap.xml`.
+- **Index**: if your source has a curated landing file (`index.md`, `README.md`, `overview.md`, `home.md`, `start.md`), its rendered output becomes `_site/index.html`. Otherwise the skill generates a fallback hub listing every rendered page. No `sitemap.xml` in v0.
 
 ## Trust boundary
 
