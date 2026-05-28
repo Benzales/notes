@@ -244,6 +244,59 @@ export function sanitize(input: string): string {
   return filterStyleBlocks(cleaned);
 }
 
+// ─── Diagnostic summary ─────────────────────────────────────────────────────
+//
+// Returns a single-line stderr message describing what the sanitizer removed.
+// Pre-scans the input for patterns we know will be stripped or wiped — the
+// counts are approximate (regex on input) but accurate enough for the
+// orchestrator (T6) to surface in the build summary so the user can see what
+// the trust boundary actually caught.
+//
+// "sanitize: clean" when nothing was removed; otherwise a comma-separated
+// list of non-zero categories.
+
+function countMatches(s: string, re: RegExp): number {
+  return (s.match(re) || []).length;
+}
+
+function countStyleWipes(input: string): number {
+  let wipes = 0;
+  const re = /<style\b[^>]*>([\s\S]*?)<\/style\s*>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(input)) !== null) {
+    if (!cssBlockIsSafe(m[1])) wipes++;
+  }
+  return wipes;
+}
+
+export function summarize(input: string): string {
+  const counts = {
+    scripts: countMatches(input, /<script\b/gi),
+    handlers: countMatches(input, /\s+on[a-z]+\s*=/gi),
+    frames: countMatches(input, /<(iframe|object|embed)\b/gi),
+    forms: countMatches(input, /<(form|input|button|textarea|select)\b/gi),
+    externalRefs: countMatches(input, /<(link|meta|base)\b/gi),
+    jsUris: countMatches(input, /javascript\s*:/gi),
+    styleWipes: countStyleWipes(input),
+  };
+
+  const parts: string[] = [];
+  if (counts.scripts) parts.push(`${counts.scripts} <script>`);
+  if (counts.handlers) parts.push(`${counts.handlers} on* handler${counts.handlers === 1 ? '' : 's'}`);
+  if (counts.frames) parts.push(`${counts.frames} <iframe>/<object>/<embed>`);
+  if (counts.forms) parts.push(`${counts.forms} <form>/<input>/<button>`);
+  if (counts.externalRefs) parts.push(`${counts.externalRefs} <link>/<meta>/<base>`);
+  if (counts.jsUris) parts.push(`${counts.jsUris} javascript: URI${counts.jsUris === 1 ? '' : 's'}`);
+
+  const removalsLine = parts.length ? `sanitize: removed ${parts.join(', ')}` : '';
+  const wipeLine = counts.styleWipes
+    ? `sanitize: wiped ${counts.styleWipes} <style> block${counts.styleWipes === 1 ? '' : 's'} (unsafe CSS)`
+    : '';
+
+  const lines = [removalsLine, wipeLine].filter(Boolean);
+  return lines.length ? lines.join('\n') : 'sanitize: clean';
+}
+
 // ─── CLI: stdin → stdout ────────────────────────────────────────────────────
 
 async function readStdin(): Promise<string> {
@@ -271,7 +324,14 @@ const isMain = (() => {
 if (isMain) {
   readStdin()
     .then((input) => {
-      process.stdout.write(sanitize(input));
+      const html = sanitize(input);
+      const summary = summarize(input);
+      process.stdout.write(html);
+      // Always write the summary to stderr — "sanitize: clean" included.
+      // The orchestrator (T6) decides whether to surface clean lines or only
+      // non-clean ones; keeping the line always-present means SKILL.md can
+      // rely on a deterministic stderr shape.
+      process.stderr.write(summary + '\n');
     })
     .catch((err) => {
       process.stderr.write(`sanitize: ${err instanceof Error ? err.message : String(err)}\n`);

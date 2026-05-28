@@ -5,7 +5,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { sanitize } from './sanitize.ts';
+import { sanitize, summarize } from './sanitize.ts';
 
 test('safe semantic HTML passes through', () => {
   const input = `<article>
@@ -161,4 +161,46 @@ test('target=_blank links get rel=noopener noreferrer', () => {
   assert.match(out, /target="_blank"/);
   assert.match(out, /rel="[^"]*noopener[^"]*"/);
   assert.match(out, /rel="[^"]*noreferrer[^"]*"/);
+});
+
+// ─── summarize() — stderr diagnostic ───────────────────────────────────────
+
+test('summarize: clean input reports "clean"', () => {
+  const input = `<article><h1>Hi</h1><p>safe content</p></article>`;
+  assert.equal(summarize(input), 'sanitize: clean');
+});
+
+test('summarize: counts <script> tags', () => {
+  const input = `<p>ok</p><script>x()</script><script>y()</script>`;
+  assert.match(summarize(input), /removed 2 <script>/);
+});
+
+test('summarize: counts handlers, frames, forms together', () => {
+  const input = `<div onclick="x()" onload="y()"></div>
+    <iframe src="x"></iframe>
+    <form><input></form>`;
+  const out = summarize(input);
+  assert.match(out, /2 on\* handlers/);
+  assert.match(out, /1 <iframe>/);
+  assert.match(out, /2 <form>/); // form + input
+});
+
+test('summarize: counts javascript: URIs', () => {
+  const input = `<a href="javascript:x()">a</a><a href="javascript:y()">b</a>`;
+  assert.match(summarize(input), /2 javascript: URIs/);
+});
+
+test('summarize: reports <style> block wipes separately', () => {
+  const input = `<style>@import url("x.css");</style><p>ok</p>`;
+  const out = summarize(input);
+  assert.match(out, /wiped 1 <style> block \(unsafe CSS\)/);
+});
+
+test('summarize: handles mixed removals + wipes on separate lines', () => {
+  const input = `<script>x()</script><style>@import url("x");</style>`;
+  const out = summarize(input);
+  const lines = out.split('\n');
+  assert.equal(lines.length, 2);
+  assert.match(lines[0], /removed 1 <script>/);
+  assert.match(lines[1], /wiped 1 <style> block/);
 });
