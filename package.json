@@ -1,0 +1,19 @@
+{
+  "name": "md-to-redesigned-html",
+  "version": "0.0.1",
+  "private": true,
+  "description": "HTML layer for an LLM-wiki: render markdown notes into a coherent, design-system-grounded HTML site.",
+  "type": "module",
+  "scripts": {
+    "sanitize": "tsx bin/sanitize.ts",
+    "test": "node --test --import tsx bin/sanitize.test.ts"
+  },
+  "dependencies": {
+    "sanitize-html": "^2.13.0"
+  },
+  "devDependencies": {
+    "@types/sanitize-html": "^2.13.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
