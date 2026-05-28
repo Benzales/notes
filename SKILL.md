@@ -105,7 +105,9 @@ For each `.md` not skipped, in any order (sequential, single context — see
     body. If there isn't one, fall back to the source filename without
     extension.
 11. **Wrap in the page shell** (see the next major section below). Substitute
-    `{{TITLE}}` and `{{ARTICLE_HTML}}`.
+    `{{TITLE}}`, `{{ARTICLE_HTML}}`, and `{{DESIGN_SYSTEM_CSS}}` (the same
+    CSS content you loaded in step 1.3 — inlined into the page's `<style>`
+    block so each page is self-contained).
 12. **Determine the output path:**
     - If this source file is the landing file (step 2.4), write to
       `<folder>/_site/index.html`.
@@ -217,7 +219,9 @@ when writing each `_site/<name>.html`:
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' data:; script-src 'none'; object-src 'none'; base-uri 'self'; frame-ancestors 'self';">
 <title>{{TITLE}}</title>
-<link rel="stylesheet" href="./_design/system.css">
+<style>
+{{DESIGN_SYSTEM_CSS}}
+</style>
 </head>
 <body>
 <main class="page">
@@ -229,6 +233,12 @@ when writing each `_site/<name>.html`:
 
 `{{TITLE}}` is extracted from the rendered HTML's first `<h1>`.
 `{{ARTICLE_HTML}}` is the sanitized output of `bin/sanitize.ts`.
+`{{DESIGN_SYSTEM_CSS}}` is the contents of `<folder>/_design/system.css` —
+inlined into every page so each page is self-contained (works under `file://`,
+HTTPS, any subdirectory depth, GitHub Pages with or without a subpath). Cost:
+the theme is duplicated into every page (~20KB per page). Trade-off: when the
+user edits `_design/system.css`, they must re-render the corpus for changes
+to propagate.
 
 The CSP meta tag is the second defense layer (sanitize-html is the first).
 `script-src 'none'` means: even if a `<script>` slips past the sanitizer
