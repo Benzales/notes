@@ -567,6 +567,11 @@ article > * + h3 { margin-top: var(--space-5); }
 }
 
 </style>
+<style id="svg-var-fix">/* launch fix: var() is ignored in SVG presentation attributes; re-apply via CSS (attribute selectors override presentation attrs) */
+[fill="var(--accent)"]{fill:var(--accent)}[fill="var(--accent-soft)"]{fill:var(--accent-soft)}[fill="var(--bg)"]{fill:var(--bg)}[fill="var(--bg-elev)"]{fill:var(--bg-elev)}[fill="var(--fg)"]{fill:var(--fg)}[fill="var(--fg-muted)"]{fill:var(--fg-muted)}[fill="var(--fg-secondary)"]{fill:var(--fg-secondary)}
+[stroke="var(--accent)"]{stroke:var(--accent)}[stroke="var(--accent-rule)"]{stroke:var(--accent-rule)}[stroke="var(--fg-muted)"]{stroke:var(--fg-muted)}[stroke="var(--fg-secondary)"]{stroke:var(--fg-secondary)}[stroke="var(--rule)"]{stroke:var(--rule)}[stroke="var(--rule-strong)"]{stroke:var(--rule-strong)}
+[font-family="var(--font-mono)"]{font-family:var(--font-mono)}[font-family="var(--font-sans)"]{font-family:var(--font-sans)}
+</style>
 </head>
 <body>
 <main class="page">
