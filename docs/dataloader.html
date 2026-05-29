@@ -1,0 +1,978 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' data:; script-src 'none'; object-src 'none'; base-uri 'self'; frame-ancestors 'self';">
+<title>DataLoader Patterns</title>
+<style>
+/*
+ * md-to-redesigned-html default theme
+ * Linear / Vercel docs lineage. Sharp, modern, technical, calm-precise.
+ *
+ * Three layers, three different contracts with the LLM:
+ *
+ *   1. TOKENS (color, type, spacing, radii) — the shared visual language. Every
+ *      page should reference them. This is what makes a folder of notes feel like
+ *      one site. HARD contract: the render prompt instructs Claude to use these.
+ *
+ *   2. BASE STYLES (h1-h6, p, ul, table, code, details, ...) — every standard
+ *      HTML element is styled regardless of class. Pure semantic HTML still looks
+ *      decent. No special opt-in.
+ *
+ *   3. NAMED PATTERNS (.callout, .eyebrow, .index-card, .page--with-toc, ...) —
+ *      pre-baked moves for common shapes. SUGGESTIONS, not rules. The LLM is free
+ *      to invent: per-page <style> blocks and inline styles referencing tokens are
+ *      both encouraged. Coherence comes from tokens, not from class-name policing.
+ *
+ * Edit pattern names with care (they're referenced by the render prompt). Edit
+ * tokens deliberately (they're the entire visual contract).
+ */
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Tokens
+   ────────────────────────────────────────────────────────────────────────── */
+:root {
+  color-scheme: light dark;
+
+  /* Color — light (zinc ramp + violet accent) */
+  --bg:            #ffffff;
+  --bg-elev:       #fafafa;
+  --bg-code:       #f4f4f5;
+  --fg:            #18181b;
+  --fg-secondary:  #3f3f46;
+  --fg-muted:      #71717a;
+  --rule:          #e4e4e7;
+  --rule-strong:   #d4d4d8;
+  --accent:        #6d28d9;
+  --accent-fg:     #ffffff;
+  --accent-soft:   #faf5ff;
+  --accent-rule:   #c4b5fd;
+  --good:          #15803d;
+  --bad:           #b91c1c;
+  --warn:          #b45309;
+
+  /* Type stacks */
+  --font-sans: "Inter", "Geist Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* Type scale (anchored at 15px body) */
+  --text-3xs:  0.6875rem; /* 11 — micro-labels */
+  --text-2xs:  0.75rem;   /* 12 */
+  --text-xs:   0.8125rem; /* 13 */
+  --text-sm:   0.875rem;  /* 14 */
+  --text-base: 0.9375rem; /* 15 — body */
+  --text-md:   1rem;      /* 16 */
+  --text-lg:   1.125rem;  /* 18 */
+  --text-xl:   1.375rem;  /* 22 — h2 */
+  --text-2xl:  1.75rem;   /* 28 — h1 alt */
+  --text-3xl:  2rem;      /* 32 — h1 */
+
+  --leading-tight:   1.2;
+  --leading-snug:    1.35;
+  --leading-base:    1.55;
+  --leading-relaxed: 1.65;
+
+  --tracking-tight:  -0.015em;
+  --tracking-base:   0;
+  --tracking-wide:   0.06em;
+
+  /* Spacing (4px scale) */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 2.5rem;
+  --space-8: 3rem;
+  --space-10: 4rem;
+  --space-12: 5rem;
+
+  /* Layout */
+  --content-width: 680px;
+  --page-width:    1080px;
+  --sidebar-width: 220px;
+  --aside-width:   240px;
+
+  /* Radii — sharp; ≤4px per design doc */
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 6px; /* reserved for larger cards if needed */
+
+  --border: 1px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:            #09090b;
+    --bg-elev:       #18181b;
+    --bg-code:       #18181b;
+    --fg:            #fafafa;
+    --fg-secondary:  #d4d4d8;
+    --fg-muted:      #a1a1aa;
+    --rule:          #27272a;
+    --rule-strong:   #3f3f46;
+    --accent:        #a78bfa;
+    --accent-fg:     #18181b;
+    --accent-soft:   #1e1631;
+    --accent-rule:   #5b21b6;
+    --good:          #4ade80;
+    --bad:           #fca5a5;
+    --warn:          #fbbf24;
+  }
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Reset
+   ────────────────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+* { margin: 0; padding: 0; }
+html { -webkit-text-size-adjust: 100%; tab-size: 4; }
+body { min-height: 100vh; }
+img, picture, video, canvas, svg { display: block; max-width: 100%; }
+input, button, textarea, select { font: inherit; color: inherit; }
+button { background: none; border: none; cursor: pointer; }
+p, h1, h2, h3, h4, h5, h6 { overflow-wrap: break-word; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-sm); }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Base
+   ────────────────────────────────────────────────────────────────────────── */
+html {
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: var(--leading-base);
+  color: var(--fg);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "cv11", "ss01", "ss03"; /* Inter stylistic sets — gracefully ignored elsewhere */
+}
+
+body {
+  font-size: var(--text-base);
+  color: var(--fg-secondary);
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Typography
+   ────────────────────────────────────────────────────────────────────────── */
+h1, h2, h3, h4, h5, h6 {
+  color: var(--fg);
+  font-weight: 600;
+  letter-spacing: var(--tracking-tight);
+  line-height: var(--leading-tight);
+  scroll-margin-top: var(--space-6);
+}
+h1 { font-size: var(--text-3xl); margin-bottom: var(--space-4); }
+h2 { font-size: var(--text-xl); margin: var(--space-7) 0 var(--space-3); }
+h3 { font-size: var(--text-lg); margin: var(--space-5) 0 var(--space-2); }
+h4 { font-size: var(--text-md); margin: var(--space-4) 0 var(--space-2); }
+h5 { font-size: var(--text-base); margin: var(--space-4) 0 var(--space-2); }
+h6 {
+  font-size: var(--text-3xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  margin: var(--space-4) 0 var(--space-2);
+}
+
+p { margin-bottom: var(--space-3); max-width: var(--content-width); }
+p:last-child { margin-bottom: 0; }
+
+small { font-size: var(--text-xs); color: var(--fg-muted); }
+strong { color: var(--fg); font-weight: 600; }
+em { font-style: italic; }
+mark {
+  background: var(--accent-soft);
+  color: var(--fg);
+  padding: 0 0.2em;
+  border-radius: var(--radius-sm);
+}
+abbr[title] {
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  cursor: help;
+}
+
+ul, ol {
+  margin: 0 0 var(--space-3);
+  padding-left: var(--space-5);
+  max-width: var(--content-width);
+}
+ul { list-style: disc; }
+ol { list-style: decimal; }
+li { margin-bottom: var(--space-1); }
+li > ul, li > ol { margin-top: var(--space-1); margin-bottom: 0; }
+
+dl { margin: 0 0 var(--space-3); max-width: var(--content-width); }
+dt { color: var(--fg); font-weight: 600; margin-top: var(--space-3); }
+dd { margin-left: var(--space-4); color: var(--fg-secondary); }
+
+blockquote {
+  margin: var(--space-4) 0;
+  padding: var(--space-1) var(--space-4);
+  border-left: 2px solid var(--rule-strong);
+  color: var(--fg-secondary);
+  font-style: normal;
+  max-width: var(--content-width);
+}
+blockquote > p:last-child { margin-bottom: 0; }
+
+hr {
+  border: none;
+  border-top: 1px solid var(--rule);
+  margin: var(--space-6) 0;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Inline code + pre
+   ────────────────────────────────────────────────────────────────────────── */
+code {
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  background: var(--bg-code);
+  color: var(--fg);
+  padding: 0.1em 0.35em;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--rule);
+}
+
+pre {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  background: var(--bg-code);
+  color: var(--fg);
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--rule);
+  overflow-x: auto;
+  margin: var(--space-4) 0;
+  max-width: 100%;
+}
+pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+  color: inherit;
+}
+
+kbd {
+  font-family: var(--font-mono);
+  font-size: 0.75em;
+  background: var(--bg-elev);
+  color: var(--fg);
+  padding: 0.15em 0.4em;
+  border: 1px solid var(--rule-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Links
+   ────────────────────────────────────────────────────────────────────────── */
+a {
+  color: var(--accent);
+  text-decoration: none;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+a:hover { text-decoration: underline; }
+a.muted { color: var(--fg-secondary); }
+a.muted:hover { color: var(--fg); }
+a.ext::after { content: " ↗"; color: var(--fg-muted); font-size: 0.85em; }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Tables
+   ────────────────────────────────────────────────────────────────────────── */
+table {
+  border-collapse: collapse;
+  width: 100%;
+  max-width: var(--content-width);
+  margin: var(--space-4) 0;
+  font-size: var(--text-sm);
+}
+th, td {
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+}
+th {
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  color: var(--fg-muted);
+  font-weight: 600;
+  border-bottom-color: var(--rule-strong);
+}
+tbody tr:last-child td { border-bottom: none; }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Component primitives — the LLM composes against these
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* Eyebrow: a micro-label above a heading. e.g. "GUIDE" / "REFERENCE" */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  color: var(--fg-muted);
+  margin-bottom: var(--space-2);
+  display: inline-block;
+}
+
+/* Lede: the first paragraph after h1, slightly larger */
+.lede {
+  font-size: var(--text-md);
+  color: var(--fg-secondary);
+  margin-bottom: var(--space-5);
+  max-width: var(--content-width);
+  line-height: var(--leading-relaxed);
+}
+
+/* Callout: bordered block with a colored left rule. */
+.callout {
+  background: var(--bg-elev);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  margin: var(--space-4) 0;
+  max-width: var(--content-width);
+  font-size: var(--text-sm);
+}
+.callout > :last-child { margin-bottom: 0; }
+.callout--note    { border-left-color: var(--accent); }
+.callout--good    { border-left-color: var(--good);  background: color-mix(in srgb, var(--good) 5%, var(--bg-elev)); }
+.callout--warn    { border-left-color: var(--warn);  background: color-mix(in srgb, var(--warn) 6%, var(--bg-elev)); }
+.callout--bad     { border-left-color: var(--bad);   background: color-mix(in srgb, var(--bad) 5%, var(--bg-elev)); }
+.callout strong { color: var(--fg); }
+
+/* Card: bordered surface for grouped content (e.g. index entries) */
+.card {
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  transition: border-color 120ms ease;
+}
+a.card:hover, .card:hover { border-color: var(--rule-strong); }
+.card h2, .card h3 { margin-top: 0; }
+
+/* Tag chip: free-form taxonomy from the LLM */
+.tag {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  color: var(--fg-muted);
+  background: var(--bg-elev);
+  border: 1px solid var(--rule);
+  padding: 0.1em 0.45em;
+  border-radius: var(--radius-sm);
+  text-transform: lowercase;
+  letter-spacing: 0;
+}
+.tag + .tag { margin-left: var(--space-1); }
+a.tag:hover { color: var(--fg); border-color: var(--rule-strong); }
+
+/* Badge: status / category indicator (more prominent than .tag) */
+.badge {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  padding: 0.15em 0.5em;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid var(--accent-rule);
+}
+
+/* Term: glossary term inline */
+.term {
+  border-bottom: 1px dotted var(--accent-rule);
+  color: var(--fg);
+  cursor: help;
+}
+
+/* Native details — collapsibles */
+details {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  margin: var(--space-3) 0;
+  max-width: var(--content-width);
+  background: var(--bg);
+  overflow: hidden;
+}
+details summary {
+  list-style: none;
+  cursor: pointer;
+  padding: var(--space-3) var(--space-4);
+  color: var(--fg);
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+details summary::-webkit-details-marker { display: none; }
+details summary::before {
+  content: "›";
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  display: inline-block;
+  transition: transform 120ms ease;
+  font-size: 1.1em;
+  line-height: 1;
+}
+details[open] summary::before { transform: rotate(90deg); }
+details > :not(summary) {
+  padding: 0 var(--space-4) var(--space-3);
+}
+
+/* Figure + caption */
+figure { margin: var(--space-4) 0; max-width: var(--content-width); }
+figcaption {
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+  margin-top: var(--space-2);
+  text-align: left;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Layout primitives
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* .page: a generous single-column page wrapper with default padding */
+.page {
+  max-width: var(--page-width);
+  margin: 0 auto;
+  padding: var(--space-8) var(--space-5) var(--space-12);
+}
+
+/* .page--with-aside: main content + sticky aside grid */
+.page--with-aside {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--aside-width);
+  gap: var(--space-7);
+}
+.page--with-aside > aside {
+  position: sticky;
+  top: var(--space-6);
+  align-self: start;
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+}
+@media (max-width: 880px) {
+  .page--with-aside { grid-template-columns: 1fr; }
+  .page--with-aside > aside { position: static; }
+}
+
+/* .page--with-toc: sticky TOC on the LEFT */
+.page--with-toc {
+  display: grid;
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  gap: var(--space-7);
+}
+.page--with-toc > nav {
+  position: sticky;
+  top: var(--space-6);
+  align-self: start;
+  font-size: var(--text-xs);
+}
+.page--with-toc > nav a {
+  display: block;
+  padding: var(--space-1) 0 var(--space-1) var(--space-3);
+  border-left: 1px solid var(--rule);
+  color: var(--fg-muted);
+}
+.page--with-toc > nav a:hover, .page--with-toc > nav a[aria-current="page"] {
+  color: var(--fg);
+  border-left-color: var(--accent);
+}
+@media (max-width: 880px) {
+  .page--with-toc { grid-template-columns: 1fr; }
+  .page--with-toc > nav { display: none; }
+}
+
+/* article: the content body */
+article { max-width: var(--content-width); }
+article > * + h2 { margin-top: var(--space-7); }
+article > * + h3 { margin-top: var(--space-5); }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Index page — the hub
+   ────────────────────────────────────────────────────────────────────────── */
+.index-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--space-4);
+  margin: var(--space-5) 0;
+  max-width: 100%;
+}
+.index-card {
+  display: block;
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  color: var(--fg-secondary);
+  transition: border-color 120ms ease, transform 120ms ease;
+}
+.index-card:hover { border-color: var(--rule-strong); text-decoration: none; }
+.index-card h3 {
+  font-size: var(--text-md);
+  margin: 0 0 var(--space-2);
+  color: var(--fg);
+}
+.index-card p {
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+  margin-bottom: var(--space-3);
+  line-height: var(--leading-snug);
+}
+.index-card .tags { margin-top: auto; }
+
+/* Filter bar — for tag-driven grouping on index */
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin: var(--space-4) 0;
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--rule);
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Utilities
+   ────────────────────────────────────────────────────────────────────────── */
+.muted { color: var(--fg-muted); }
+.mono  { font-family: var(--font-mono); }
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0);
+  white-space: nowrap; border: 0;
+}
+
+</style>
+</head>
+<body>
+<main class="page">
+
+<style>
+  .tier-ladder {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: var(--space-3) var(--space-4);
+    margin: var(--space-5) 0;
+    max-width: var(--content-width);
+    align-items: start;
+  }
+  .tier-ladder .tier-num {
+    font-family: var(--font-mono);
+    font-size: var(--text-3xs);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    color: var(--fg-muted);
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--rule);
+    border-radius: var(--radius-sm);
+    background: var(--bg-elev);
+    white-space: nowrap;
+    align-self: start;
+  }
+  .tier-ladder .tier-body { padding-top: var(--space-1); }
+  .tier-ladder .tier-body strong { display: block; color: var(--fg); margin-bottom: var(--space-1); }
+  .tier-ladder .tier-body .muted { font-size: var(--text-xs); }
+
+  .xy-diagram {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: var(--space-2) var(--space-3);
+    align-items: center;
+    margin: var(--space-4) 0;
+    max-width: var(--content-width);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    background: var(--bg-elev);
+    border: 1px solid var(--rule);
+    border-radius: var(--radius-md);
+    padding: var(--space-4);
+  }
+  .xy-diagram .label {
+    color: var(--fg-muted);
+    text-align: right;
+  }
+  .xy-diagram .row {
+    display: flex;
+    gap: 2px;
+  }
+  .xy-diagram .cell {
+    flex: 1;
+    text-align: center;
+    padding: var(--space-1) 0;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius-sm);
+    background: var(--bg);
+    color: var(--fg);
+  }
+  .xy-diagram .cell.shift { background: var(--accent-soft); color: var(--accent); border-color: var(--accent-rule); }
+  .xy-diagram .caption {
+    grid-column: 1 / -1;
+    font-family: var(--font-sans);
+    font-size: var(--text-xs);
+    color: var(--fg-muted);
+    margin-top: var(--space-2);
+    border-top: 1px solid var(--rule);
+    padding-top: var(--space-2);
+  }
+
+  .rank-grid {
+    display: grid;
+    grid-template-columns: auto repeat(8, 1fr);
+    gap: 2px;
+    margin: var(--space-4) 0;
+    max-width: var(--content-width);
+    font-family: var(--font-mono);
+    font-size: var(--text-3xs);
+  }
+  .rank-grid .rank-label {
+    grid-column: 1;
+    color: var(--fg-muted);
+    text-align: right;
+    padding: var(--space-1) var(--space-2);
+    align-self: center;
+  }
+  .rank-grid .slot {
+    padding: var(--space-2) 0;
+    text-align: center;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--rule);
+    background: var(--bg);
+    color: var(--fg-muted);
+  }
+  .rank-grid .slot.r0 { background: color-mix(in srgb, var(--accent) 14%, var(--bg)); color: var(--accent); border-color: var(--accent-rule); }
+  .rank-grid .slot.r1 { background: color-mix(in srgb, var(--good) 14%, var(--bg)); color: var(--good); border-color: color-mix(in srgb, var(--good) 35%, var(--rule)); }
+  .rank-grid .caption {
+    grid-column: 1 / -1;
+    font-family: var(--font-sans);
+    font-size: var(--text-xs);
+    color: var(--fg-muted);
+    margin-top: var(--space-2);
+  }
+
+  .compare-table th:first-child, .compare-table td:first-child {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--fg-muted);
+    white-space: nowrap;
+  }
+</style>
+
+<article>
+  <span class="eyebrow">Concept · Training infra</span>
+  <h1>DataLoader Patterns</h1>
+
+  <p class="lede">
+    Feeding tokens into a transformer training loop is conceptually simple —
+    sample random sequences from a giant token stream — but the engineering
+    matters a lot at scale. Karpathy's repos progressively reveal what a good
+    LLM dataloader looks like, from a one-liner in
+    <a href="repos/ng-video-lecture.html">ng-video-lecture</a> to the sharded
+    streaming loader in <a href="repos/build-nanogpt.html">build-nanogpt</a>.
+  </p>
+
+  <h6>The three tiers</h6>
+  <div class="tier-ladder">
+    <div class="tier-num">Tier 1</div>
+    <div class="tier-body">
+      <strong>In-memory random crop</strong>
+      <span class="muted">ng-video-lecture, makemore — entire stream in one CPU tensor, random starting offsets per batch.</span>
+    </div>
+
+    <div class="tier-num">Tier 2</div>
+    <div class="tier-body">
+      <strong>PyTorch <code>DataLoader</code> over a <code>Dataset</code></strong>
+      <span class="muted">makemore — batching, shuffling, and multi-worker prefetching for free.</span>
+    </div>
+
+    <div class="tier-num">Tier 3</div>
+    <div class="tier-body">
+      <strong>Sharded streaming</strong>
+      <span class="muted">build-nanogpt — many <code>.npy</code> shards, sequential reads, DDP rank slicing.</span>
+    </div>
+  </div>
+
+  <h2>Tier 1 — in-memory random crop (ng-video-lecture, makemore)</h2>
+
+  <p>The simplest possible dataloader, from <code>ng-video-lecture/gpt.py</code>:</p>
+
+  <pre><code>data = torch.tensor(encode(text), dtype=torch.long)  # everything in RAM
+n = int(0.9*len(data))
+train_data = data[:n]
+val_data = data[n:]
+
+def get_batch(split):
+    data = train_data if split == 'train' else val_data
+    ix = torch.randint(len(data) - block_size, (batch_size,))
+    x = torch.stack([data[i:i+block_size] for i in ix])
+    y = torch.stack([data[i+1:i+block_size+1] for i in ix])
+    x, y = x.to(device), y.to(device)
+    return x, y</code></pre>
+
+  <p>The entire token stream is one tensor in CPU memory. To make a batch:</p>
+
+  <ol>
+    <li>Pick <code>batch_size</code> random starting positions in the stream.</li>
+    <li>Slice out <code>block_size</code> tokens starting from each.</li>
+    <li>The inputs <code>x</code> are tokens <code>i .. i+block_size</code>.</li>
+    <li>The targets <code>y</code> are tokens <code>i+1 .. i+block_size+1</code> — same window, shifted right by one. Each input token's target is the next token.</li>
+  </ol>
+
+  <h3>The shift-by-one window, visualized</h3>
+
+  <div class="xy-diagram" aria-label="x and y windows over the same token stream, shifted by one">
+    <div class="label">stream</div>
+    <div class="row">
+      <div class="cell">t<sub>0</sub></div>
+      <div class="cell">t<sub>1</sub></div>
+      <div class="cell">t<sub>2</sub></div>
+      <div class="cell">t<sub>3</sub></div>
+      <div class="cell">t<sub>4</sub></div>
+      <div class="cell">t<sub>5</sub></div>
+      <div class="cell">t<sub>6</sub></div>
+      <div class="cell">t<sub>7</sub></div>
+    </div>
+
+    <div class="label">x =</div>
+    <div class="row">
+      <div class="cell">t<sub>0</sub></div>
+      <div class="cell">t<sub>1</sub></div>
+      <div class="cell">t<sub>2</sub></div>
+      <div class="cell">t<sub>3</sub></div>
+      <div class="cell">t<sub>4</sub></div>
+      <div class="cell">t<sub>5</sub></div>
+      <div class="cell" style="opacity:.25">·</div>
+      <div class="cell" style="opacity:.25">·</div>
+    </div>
+
+    <div class="label">y =</div>
+    <div class="row">
+      <div class="cell" style="opacity:.25">·</div>
+      <div class="cell shift">t<sub>1</sub></div>
+      <div class="cell shift">t<sub>2</sub></div>
+      <div class="cell shift">t<sub>3</sub></div>
+      <div class="cell shift">t<sub>4</sub></div>
+      <div class="cell shift">t<sub>5</sub></div>
+      <div class="cell shift">t<sub>6</sub></div>
+      <div class="cell" style="opacity:.25">·</div>
+    </div>
+
+    <div class="caption">
+      <code>x</code> spans <code>i .. i+block_size</code>; <code>y</code> is the same window shifted right by one. Every position contributes one next-token-prediction signal.
+    </div>
+  </div>
+
+  <div class="callout callout--note">
+    <strong>Teacher forcing + autoregressive training.</strong> At every position
+    in the sequence, the loss asks "given the tokens up to here, predict the
+    next one." A single <code>block_size</code>-token sample produces
+    <code>block_size</code> independent next-token-prediction supervision signals.
+  </div>
+
+  <p><strong>Memory.</strong> Tiny Shakespeare is ~1MB. Names is ~200KB. Both fit comfortably in RAM.</p>
+
+  <h2>Tier 2 — PyTorch <code>DataLoader</code> over a <code>Dataset</code> (makemore)</h2>
+
+  <p><code>makemore.py</code> wraps a custom <code>Dataset</code> and uses <code>torch.utils.data.DataLoader</code>:</p>
+
+  <pre><code>from torch.utils.data import Dataset
+from torch.utils.data.dataloader import DataLoader
+
+# ... define CharDataset that yields (x, y) pairs ...
+
+train_loader = DataLoader(train_dataset, ...)</code></pre>
+
+  <p>This gives you batching, shuffling, and multi-worker prefetching for free. Worth using when:</p>
+
+  <ul>
+    <li>Data preprocessing per-sample is non-trivial (decoding images, parsing JSON).</li>
+    <li>You want CPU prefetching to overlap with GPU compute.</li>
+    <li>Datasets are too big to keep in one tensor.</li>
+  </ul>
+
+  <div class="callout">
+    For pure-token LM data, the in-memory tensor approach is simpler and faster
+    (no per-sample Python overhead).
+  </div>
+
+  <h2>Tier 3 — sharded streaming (build-nanogpt)</h2>
+
+  <p>For multi-billion-token pretraining, you can't keep everything in RAM. <code>build-nanogpt/train_gpt2.py</code> has <code>DataLoaderLite</code>:</p>
+
+  <pre><code>class DataLoaderLite:
+    def __init__(self, B, T, process_rank, num_processes, split):
+        self.B = B
+        self.T = T
+        self.process_rank = process_rank
+        self.num_processes = num_processes
+
+        data_root = "edu_fineweb10B"
+        shards = os.listdir(data_root)
+        shards = [s for s in shards if split in s]
+        shards = sorted(shards)
+        shards = [os.path.join(data_root, s) for s in shards]
+        self.shards = shards
+        self.reset()
+
+    def reset(self):
+        self.current_shard = 0
+        self.tokens = load_tokens(self.shards[self.current_shard])
+        self.current_position = self.B * self.T * self.process_rank
+
+    def next_batch(self):
+        B, T = self.B, self.T
+        buf = self.tokens[self.current_position : self.current_position+B*T+1]
+        x = (buf[:-1]).view(B, T)
+        y = (buf[1:]).view(B, T)
+        self.current_position += B * T * self.num_processes
+        if self.current_position + (B * T * self.num_processes + 1) &gt; len(self.tokens):
+            self.current_shard = (self.current_shard + 1) % len(self.shards)
+            self.tokens = load_tokens(self.shards[self.current_shard])
+            self.current_position = B * T * self.process_rank
+        return x, y</code></pre>
+
+  <h3>What's going on</h3>
+
+  <dl>
+    <dt>Shards</dt>
+    <dd>The 10B-token FineWeb corpus is split into many <code>.npy</code> files (100M tokens each, typically). <code>load_tokens</code> loads one shard into a tensor.</dd>
+
+    <dt>Sequential, not random</dt>
+    <dd>Each batch advances <code>current_position</code> by <code>B * T * num_processes</code>. When you fall off the end of a shard, advance to the next one. No random sampling — the model sees the corpus in a fixed (but data-prep-shuffled) order.</dd>
+
+    <dt>DDP rank slicing</dt>
+    <dd>Each DDP rank starts at offset <code>B * T * rank</code> within the shard and advances by <code>B * T * num_processes</code>. This guarantees no two ranks see the same tokens in the same step.</dd>
+  </dl>
+
+  <h3>DDP rank slicing, visualized</h3>
+
+  <div class="rank-grid" aria-label="Two DDP ranks consuming non-overlapping slots in a shard">
+    <div class="rank-label">rank 0</div>
+    <div class="slot r0">B·T</div>
+    <div class="slot">·</div>
+    <div class="slot r0">B·T</div>
+    <div class="slot">·</div>
+    <div class="slot r0">B·T</div>
+    <div class="slot">·</div>
+    <div class="slot r0">B·T</div>
+    <div class="slot">·</div>
+
+    <div class="rank-label">rank 1</div>
+    <div class="slot">·</div>
+    <div class="slot r1">B·T</div>
+    <div class="slot">·</div>
+    <div class="slot r1">B·T</div>
+    <div class="slot">·</div>
+    <div class="slot r1">B·T</div>
+    <div class="slot">·</div>
+    <div class="slot r1">B·T</div>
+
+    <div class="caption">
+      Each rank starts at offset <code>B · T · rank</code> and advances by <code>B · T · num_processes</code>. No two ranks see the same tokens in the same step.
+    </div>
+  </div>
+
+  <div class="callout callout--note">
+    Sequential ordering is fine for LM pretraining because the corpus is so
+    large that any given token is seen once or twice per training run, not
+    many times. You can avoid random shuffling at the dataloader by doing it
+    once at data prep time.
+  </div>
+
+  <h2>The <code>fineweb.py</code> preprocessor</h2>
+
+  <p><code>build-nanogpt/fineweb.py</code> is the script that tokenizes the FineWeb-Edu dataset and writes the shards. Two-step pattern:</p>
+
+  <ol>
+    <li>Stream the raw dataset (HuggingFace <code>datasets.load_dataset</code>).</li>
+    <li>Tokenize each document with <code>tiktoken</code>, write tokens to shard files of fixed size (100M tokens each).</li>
+  </ol>
+
+  <p>Each token is a <code>uint16</code> (fits any GPT-2 token ID, which max out at 50256). 10B tokens = 20GB of binary data. Manageable.</p>
+
+  <h2>Llm.c's <code>dataloader.h</code></h2>
+
+  <p><code>llm.c/llmc/dataloader.h</code> is the C version of the same thing — <code>mmap</code>s shard files, advances a pointer, hands batches to the training loop. Same pattern, no PyTorch, just file descriptors and pointer arithmetic.</p>
+
+  <h2>Comparing the three tiers</h2>
+
+  <table class="compare-table">
+    <thead>
+      <tr>
+        <th></th>
+        <th>Tier 1 · in-memory</th>
+        <th>Tier 2 · DataLoader</th>
+        <th>Tier 3 · sharded</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>seen in</td>
+        <td>ng-video-lecture, makemore</td>
+        <td>makemore</td>
+        <td>build-nanogpt, llm.c</td>
+      </tr>
+      <tr>
+        <td>storage</td>
+        <td>one CPU tensor</td>
+        <td>custom <code>Dataset</code></td>
+        <td><code>.npy</code> shards on disk</td>
+      </tr>
+      <tr>
+        <td>sampling</td>
+        <td>random starting offsets</td>
+        <td>batching + shuffling for free</td>
+        <td>sequential, advances pointer</td>
+      </tr>
+      <tr>
+        <td>scale fits</td>
+        <td>Tiny Shakespeare ~1MB, Names ~200KB</td>
+        <td>datasets too big for one tensor</td>
+        <td>multi-billion-token pretraining</td>
+      </tr>
+      <tr>
+        <td>DDP-aware</td>
+        <td>no</td>
+        <td>via workers</td>
+        <td>yes — rank offset + stride</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Related</h2>
+
+  <ul>
+    <li><a href="tokenization.html">tokenization</a> — what produces the tokens being streamed</li>
+    <li><a href="gradient-accumulation.html">gradient-accumulation</a> — consumes batches from the loader</li>
+    <li><a href="repos/build-nanogpt.html">repos/build-nanogpt</a> — DataLoaderLite + FineWeb script</li>
+    <li><a href="repos/llm-c.html">repos/llm-c</a> — C dataloader for the same data</li>
+  </ul>
+</article>
+
+
+</main>
+</body>
+</html>

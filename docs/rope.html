@@ -1,0 +1,856 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' data:; script-src 'none'; object-src 'none'; base-uri 'self'; frame-ancestors 'self';">
+<title>RoPE: Rotary Positional Embedding</title>
+<style>
+/*
+ * md-to-redesigned-html default theme
+ * Linear / Vercel docs lineage. Sharp, modern, technical, calm-precise.
+ *
+ * Three layers, three different contracts with the LLM:
+ *
+ *   1. TOKENS (color, type, spacing, radii) — the shared visual language. Every
+ *      page should reference them. This is what makes a folder of notes feel like
+ *      one site. HARD contract: the render prompt instructs Claude to use these.
+ *
+ *   2. BASE STYLES (h1-h6, p, ul, table, code, details, ...) — every standard
+ *      HTML element is styled regardless of class. Pure semantic HTML still looks
+ *      decent. No special opt-in.
+ *
+ *   3. NAMED PATTERNS (.callout, .eyebrow, .index-card, .page--with-toc, ...) —
+ *      pre-baked moves for common shapes. SUGGESTIONS, not rules. The LLM is free
+ *      to invent: per-page <style> blocks and inline styles referencing tokens are
+ *      both encouraged. Coherence comes from tokens, not from class-name policing.
+ *
+ * Edit pattern names with care (they're referenced by the render prompt). Edit
+ * tokens deliberately (they're the entire visual contract).
+ */
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Tokens
+   ────────────────────────────────────────────────────────────────────────── */
+:root {
+  color-scheme: light dark;
+
+  /* Color — light (zinc ramp + violet accent) */
+  --bg:            #ffffff;
+  --bg-elev:       #fafafa;
+  --bg-code:       #f4f4f5;
+  --fg:            #18181b;
+  --fg-secondary:  #3f3f46;
+  --fg-muted:      #71717a;
+  --rule:          #e4e4e7;
+  --rule-strong:   #d4d4d8;
+  --accent:        #6d28d9;
+  --accent-fg:     #ffffff;
+  --accent-soft:   #faf5ff;
+  --accent-rule:   #c4b5fd;
+  --good:          #15803d;
+  --bad:           #b91c1c;
+  --warn:          #b45309;
+
+  /* Type stacks */
+  --font-sans: "Inter", "Geist Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* Type scale (anchored at 15px body) */
+  --text-3xs:  0.6875rem; /* 11 — micro-labels */
+  --text-2xs:  0.75rem;   /* 12 */
+  --text-xs:   0.8125rem; /* 13 */
+  --text-sm:   0.875rem;  /* 14 */
+  --text-base: 0.9375rem; /* 15 — body */
+  --text-md:   1rem;      /* 16 */
+  --text-lg:   1.125rem;  /* 18 */
+  --text-xl:   1.375rem;  /* 22 — h2 */
+  --text-2xl:  1.75rem;   /* 28 — h1 alt */
+  --text-3xl:  2rem;      /* 32 — h1 */
+
+  --leading-tight:   1.2;
+  --leading-snug:    1.35;
+  --leading-base:    1.55;
+  --leading-relaxed: 1.65;
+
+  --tracking-tight:  -0.015em;
+  --tracking-base:   0;
+  --tracking-wide:   0.06em;
+
+  /* Spacing (4px scale) */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 2.5rem;
+  --space-8: 3rem;
+  --space-10: 4rem;
+  --space-12: 5rem;
+
+  /* Layout */
+  --content-width: 680px;
+  --page-width:    1080px;
+  --sidebar-width: 220px;
+  --aside-width:   240px;
+
+  /* Radii — sharp; ≤4px per design doc */
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 6px; /* reserved for larger cards if needed */
+
+  --border: 1px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:            #09090b;
+    --bg-elev:       #18181b;
+    --bg-code:       #18181b;
+    --fg:            #fafafa;
+    --fg-secondary:  #d4d4d8;
+    --fg-muted:      #a1a1aa;
+    --rule:          #27272a;
+    --rule-strong:   #3f3f46;
+    --accent:        #a78bfa;
+    --accent-fg:     #18181b;
+    --accent-soft:   #1e1631;
+    --accent-rule:   #5b21b6;
+    --good:          #4ade80;
+    --bad:           #fca5a5;
+    --warn:          #fbbf24;
+  }
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Reset
+   ────────────────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+* { margin: 0; padding: 0; }
+html { -webkit-text-size-adjust: 100%; tab-size: 4; }
+body { min-height: 100vh; }
+img, picture, video, canvas, svg { display: block; max-width: 100%; }
+input, button, textarea, select { font: inherit; color: inherit; }
+button { background: none; border: none; cursor: pointer; }
+p, h1, h2, h3, h4, h5, h6 { overflow-wrap: break-word; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-sm); }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Base
+   ────────────────────────────────────────────────────────────────────────── */
+html {
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: var(--leading-base);
+  color: var(--fg);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "cv11", "ss01", "ss03"; /* Inter stylistic sets — gracefully ignored elsewhere */
+}
+
+body {
+  font-size: var(--text-base);
+  color: var(--fg-secondary);
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Typography
+   ────────────────────────────────────────────────────────────────────────── */
+h1, h2, h3, h4, h5, h6 {
+  color: var(--fg);
+  font-weight: 600;
+  letter-spacing: var(--tracking-tight);
+  line-height: var(--leading-tight);
+  scroll-margin-top: var(--space-6);
+}
+h1 { font-size: var(--text-3xl); margin-bottom: var(--space-4); }
+h2 { font-size: var(--text-xl); margin: var(--space-7) 0 var(--space-3); }
+h3 { font-size: var(--text-lg); margin: var(--space-5) 0 var(--space-2); }
+h4 { font-size: var(--text-md); margin: var(--space-4) 0 var(--space-2); }
+h5 { font-size: var(--text-base); margin: var(--space-4) 0 var(--space-2); }
+h6 {
+  font-size: var(--text-3xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  margin: var(--space-4) 0 var(--space-2);
+}
+
+p { margin-bottom: var(--space-3); max-width: var(--content-width); }
+p:last-child { margin-bottom: 0; }
+
+small { font-size: var(--text-xs); color: var(--fg-muted); }
+strong { color: var(--fg); font-weight: 600; }
+em { font-style: italic; }
+mark {
+  background: var(--accent-soft);
+  color: var(--fg);
+  padding: 0 0.2em;
+  border-radius: var(--radius-sm);
+}
+abbr[title] {
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  cursor: help;
+}
+
+ul, ol {
+  margin: 0 0 var(--space-3);
+  padding-left: var(--space-5);
+  max-width: var(--content-width);
+}
+ul { list-style: disc; }
+ol { list-style: decimal; }
+li { margin-bottom: var(--space-1); }
+li > ul, li > ol { margin-top: var(--space-1); margin-bottom: 0; }
+
+dl { margin: 0 0 var(--space-3); max-width: var(--content-width); }
+dt { color: var(--fg); font-weight: 600; margin-top: var(--space-3); }
+dd { margin-left: var(--space-4); color: var(--fg-secondary); }
+
+blockquote {
+  margin: var(--space-4) 0;
+  padding: var(--space-1) var(--space-4);
+  border-left: 2px solid var(--rule-strong);
+  color: var(--fg-secondary);
+  font-style: normal;
+  max-width: var(--content-width);
+}
+blockquote > p:last-child { margin-bottom: 0; }
+
+hr {
+  border: none;
+  border-top: 1px solid var(--rule);
+  margin: var(--space-6) 0;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Inline code + pre
+   ────────────────────────────────────────────────────────────────────────── */
+code {
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  background: var(--bg-code);
+  color: var(--fg);
+  padding: 0.1em 0.35em;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--rule);
+}
+
+pre {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  background: var(--bg-code);
+  color: var(--fg);
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--rule);
+  overflow-x: auto;
+  margin: var(--space-4) 0;
+  max-width: 100%;
+}
+pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+  color: inherit;
+}
+
+kbd {
+  font-family: var(--font-mono);
+  font-size: 0.75em;
+  background: var(--bg-elev);
+  color: var(--fg);
+  padding: 0.15em 0.4em;
+  border: 1px solid var(--rule-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Links
+   ────────────────────────────────────────────────────────────────────────── */
+a {
+  color: var(--accent);
+  text-decoration: none;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+a:hover { text-decoration: underline; }
+a.muted { color: var(--fg-secondary); }
+a.muted:hover { color: var(--fg); }
+a.ext::after { content: " ↗"; color: var(--fg-muted); font-size: 0.85em; }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Tables
+   ────────────────────────────────────────────────────────────────────────── */
+table {
+  border-collapse: collapse;
+  width: 100%;
+  max-width: var(--content-width);
+  margin: var(--space-4) 0;
+  font-size: var(--text-sm);
+}
+th, td {
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+}
+th {
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  color: var(--fg-muted);
+  font-weight: 600;
+  border-bottom-color: var(--rule-strong);
+}
+tbody tr:last-child td { border-bottom: none; }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Component primitives — the LLM composes against these
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* Eyebrow: a micro-label above a heading. e.g. "GUIDE" / "REFERENCE" */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  color: var(--fg-muted);
+  margin-bottom: var(--space-2);
+  display: inline-block;
+}
+
+/* Lede: the first paragraph after h1, slightly larger */
+.lede {
+  font-size: var(--text-md);
+  color: var(--fg-secondary);
+  margin-bottom: var(--space-5);
+  max-width: var(--content-width);
+  line-height: var(--leading-relaxed);
+}
+
+/* Callout: bordered block with a colored left rule. */
+.callout {
+  background: var(--bg-elev);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  margin: var(--space-4) 0;
+  max-width: var(--content-width);
+  font-size: var(--text-sm);
+}
+.callout > :last-child { margin-bottom: 0; }
+.callout--note    { border-left-color: var(--accent); }
+.callout--good    { border-left-color: var(--good);  background: color-mix(in srgb, var(--good) 5%, var(--bg-elev)); }
+.callout--warn    { border-left-color: var(--warn);  background: color-mix(in srgb, var(--warn) 6%, var(--bg-elev)); }
+.callout--bad     { border-left-color: var(--bad);   background: color-mix(in srgb, var(--bad) 5%, var(--bg-elev)); }
+.callout strong { color: var(--fg); }
+
+/* Card: bordered surface for grouped content (e.g. index entries) */
+.card {
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  transition: border-color 120ms ease;
+}
+a.card:hover, .card:hover { border-color: var(--rule-strong); }
+.card h2, .card h3 { margin-top: 0; }
+
+/* Tag chip: free-form taxonomy from the LLM */
+.tag {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  color: var(--fg-muted);
+  background: var(--bg-elev);
+  border: 1px solid var(--rule);
+  padding: 0.1em 0.45em;
+  border-radius: var(--radius-sm);
+  text-transform: lowercase;
+  letter-spacing: 0;
+}
+.tag + .tag { margin-left: var(--space-1); }
+a.tag:hover { color: var(--fg); border-color: var(--rule-strong); }
+
+/* Badge: status / category indicator (more prominent than .tag) */
+.badge {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  padding: 0.15em 0.5em;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid var(--accent-rule);
+}
+
+/* Term: glossary term inline */
+.term {
+  border-bottom: 1px dotted var(--accent-rule);
+  color: var(--fg);
+  cursor: help;
+}
+
+/* Native details — collapsibles */
+details {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  margin: var(--space-3) 0;
+  max-width: var(--content-width);
+  background: var(--bg);
+  overflow: hidden;
+}
+details summary {
+  list-style: none;
+  cursor: pointer;
+  padding: var(--space-3) var(--space-4);
+  color: var(--fg);
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+details summary::-webkit-details-marker { display: none; }
+details summary::before {
+  content: "›";
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  display: inline-block;
+  transition: transform 120ms ease;
+  font-size: 1.1em;
+  line-height: 1;
+}
+details[open] summary::before { transform: rotate(90deg); }
+details > :not(summary) {
+  padding: 0 var(--space-4) var(--space-3);
+}
+
+/* Figure + caption */
+figure { margin: var(--space-4) 0; max-width: var(--content-width); }
+figcaption {
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+  margin-top: var(--space-2);
+  text-align: left;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Layout primitives
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* .page: a generous single-column page wrapper with default padding */
+.page {
+  max-width: var(--page-width);
+  margin: 0 auto;
+  padding: var(--space-8) var(--space-5) var(--space-12);
+}
+
+/* .page--with-aside: main content + sticky aside grid */
+.page--with-aside {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--aside-width);
+  gap: var(--space-7);
+}
+.page--with-aside > aside {
+  position: sticky;
+  top: var(--space-6);
+  align-self: start;
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+}
+@media (max-width: 880px) {
+  .page--with-aside { grid-template-columns: 1fr; }
+  .page--with-aside > aside { position: static; }
+}
+
+/* .page--with-toc: sticky TOC on the LEFT */
+.page--with-toc {
+  display: grid;
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  gap: var(--space-7);
+}
+.page--with-toc > nav {
+  position: sticky;
+  top: var(--space-6);
+  align-self: start;
+  font-size: var(--text-xs);
+}
+.page--with-toc > nav a {
+  display: block;
+  padding: var(--space-1) 0 var(--space-1) var(--space-3);
+  border-left: 1px solid var(--rule);
+  color: var(--fg-muted);
+}
+.page--with-toc > nav a:hover, .page--with-toc > nav a[aria-current="page"] {
+  color: var(--fg);
+  border-left-color: var(--accent);
+}
+@media (max-width: 880px) {
+  .page--with-toc { grid-template-columns: 1fr; }
+  .page--with-toc > nav { display: none; }
+}
+
+/* article: the content body */
+article { max-width: var(--content-width); }
+article > * + h2 { margin-top: var(--space-7); }
+article > * + h3 { margin-top: var(--space-5); }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Index page — the hub
+   ────────────────────────────────────────────────────────────────────────── */
+.index-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--space-4);
+  margin: var(--space-5) 0;
+  max-width: 100%;
+}
+.index-card {
+  display: block;
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  color: var(--fg-secondary);
+  transition: border-color 120ms ease, transform 120ms ease;
+}
+.index-card:hover { border-color: var(--rule-strong); text-decoration: none; }
+.index-card h3 {
+  font-size: var(--text-md);
+  margin: 0 0 var(--space-2);
+  color: var(--fg);
+}
+.index-card p {
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+  margin-bottom: var(--space-3);
+  line-height: var(--leading-snug);
+}
+.index-card .tags { margin-top: auto; }
+
+/* Filter bar — for tag-driven grouping on index */
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin: var(--space-4) 0;
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--rule);
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Utilities
+   ────────────────────────────────────────────────────────────────────────── */
+.muted { color: var(--fg-muted); }
+.mono  { font-family: var(--font-mono); }
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0);
+  white-space: nowrap; border: 0;
+}
+
+</style>
+</head>
+<body>
+<main class="page">
+
+<style>
+  .meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    align-items: center;
+    margin-bottom: var(--space-5);
+  }
+  .compare-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-3);
+    margin: var(--space-4) 0;
+    max-width: var(--content-width);
+  }
+  .compare-grid > .card { font-size: var(--text-sm); }
+  .compare-grid h4 {
+    font-family: var(--font-mono);
+    font-size: var(--text-3xs);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    color: var(--fg-muted);
+    margin: 0 0 var(--space-2);
+  }
+  .compare-grid ul { margin-bottom: 0; padding-left: var(--space-4); }
+  @media (max-width: 640px) {
+    .compare-grid { grid-template-columns: 1fr; }
+  }
+
+  .rope-diagram {
+    margin: var(--space-5) 0;
+    max-width: var(--content-width);
+  }
+  .rope-diagram svg { width: 100%; height: auto; }
+
+  .pipeline {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    margin: var(--space-4) 0;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+  }
+  .pipeline .stage {
+    border: 1px solid var(--rule);
+    border-radius: var(--radius-sm);
+    padding: var(--space-1) var(--space-3);
+    background: var(--bg-elev);
+    color: var(--fg);
+  }
+  .pipeline .stage.applied {
+    border-color: var(--accent-rule);
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .pipeline .stage.skipped {
+    color: var(--fg-muted);
+    border-style: dashed;
+  }
+  .pipeline .arrow { color: var(--fg-muted); }
+</style>
+
+<article>
+  <span class="eyebrow">Concept</span>
+  <h1>RoPE: Rotary Positional Embedding</h1>
+  <p class="lede">
+    Rotary Positional Embedding (Su et al. 2021) is how Llama, Mistral, Gemma,
+    and most modern open-weight LLMs encode position. It's a complete
+    replacement for the learned positional embedding that
+    <a href="transformer-block.html">GPT-2 uses</a>.
+    <a href="repos/llama2-c.html">Llama 2</a> implements it explicitly in
+    <code>llama2.c/model.py</code>.
+  </p>
+
+  <div class="meta-row">
+    <span class="tag">positional-encoding</span>
+    <span class="tag">attention</span>
+    <span class="tag">llama2</span>
+  </div>
+
+  <h2>The problem RoPE solves</h2>
+
+  <p>
+    A transformer's <a href="attention.html">attention</a> operation is
+    permutation-invariant: if you shuffled the tokens in your input, the
+    attention weights would be exactly the same. You have to inject positional
+    information from somewhere, or the model can't tell "the cat sat on the
+    mat" from "the mat sat on the cat."
+  </p>
+
+  <p>
+    GPT's solution: add a learned position embedding <code>wpe[pos]</code> to
+    the token embedding <code>wte[tok]</code> at the input. Simple and
+    effective, but two limitations:
+  </p>
+
+  <div class="compare-grid">
+    <div class="card">
+      <h4>Limitation 1 — Absolute, not relative</h4>
+      <p>
+        The model has to learn for itself that "two tokens apart" is similar
+        in any position. It works, but it's not parameter-efficient.
+      </p>
+    </div>
+    <div class="card">
+      <h4>Limitation 2 — Doesn't extrapolate</h4>
+      <p>
+        The position embedding table has <code>block_size</code> rows. If you
+        try to use the model on longer contexts than training, you have no
+        embedding for those positions. You can interpolate, but it's hacky.
+      </p>
+    </div>
+  </div>
+
+  <p>
+    RoPE: encode relative position by <strong>rotating</strong> the query and
+    key vectors in 2D subspaces by angles proportional to position. Then the
+    attention dot product <code>q @ k.T</code> naturally depends only on the
+    <em>difference</em> between positions.
+  </p>
+
+  <h2>The math, briefly</h2>
+
+  <p>
+    Treat the head dimension as pairs of features:
+    <code>(x0, x1), (x2, x3), ...</code>. Each pair gets rotated by an angle
+    <code>θ_i * pos</code>, where
+    <code>θ_i = 1 / (10000^(2i/d))</code> for the i-th pair — same base
+    frequency as sinusoidal positional embeddings, just used differently.
+  </p>
+
+  <figure class="rope-diagram">
+    <svg viewBox="0 0 480 220" role="img" aria-label="A 2D rotation of the feature pair (x0, x1) by angle θ·pos.">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--fg-muted)"></path>
+        </marker>
+        <marker id="arrow-accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--accent)"></path>
+        </marker>
+      </defs>
+
+      
+      <line x1="60" y1="190" x2="420" y2="190" stroke="var(--rule)" stroke-width="1"></line>
+      <line x1="240" y1="200" x2="240" y2="20" stroke="var(--rule)" stroke-width="1"></line>
+      <text x="420" y="208" font-family="var(--font-mono)" font-size="11" fill="var(--fg-muted)">x0</text>
+      <text x="248" y="22" font-family="var(--font-mono)" font-size="11" fill="var(--fg-muted)">x1</text>
+
+      
+      <line x1="240" y1="190" x2="370" y2="120" stroke="var(--fg-secondary)" stroke-width="2"></line>
+      <text x="376" y="118" font-family="var(--font-mono)" font-size="12" fill="var(--fg)">(x0, x1)</text>
+
+      
+      <line x1="240" y1="190" x2="310" y2="60" stroke="var(--accent)" stroke-width="2"></line>
+      <text x="180" y="60" font-family="var(--font-mono)" font-size="12" fill="var(--accent)">(x'0, x'1)</text>
+
+      
+      <path d="M 320 145 A 90 90 0 0 0 285 100" fill="none" stroke="var(--accent)" stroke-width="1.2" stroke-dasharray="3 3"></path>
+      <text x="295" y="138" font-family="var(--font-mono)" font-size="12" fill="var(--accent)">θ · pos</text>
+    </svg>
+    <figcaption>
+      The 2D rotation applied to each feature pair. Apply this to every pair,
+      get a rotated vector of the same shape.
+    </figcaption>
+  </figure>
+
+  <p>The rotation:</p>
+
+<pre><code>x'_0 = x_0 * cos(θ * pos) - x_1 * sin(θ * pos)
+x'_1 = x_0 * sin(θ * pos) + x_1 * cos(θ * pos)</code></pre>
+
+  <p>
+    This is just a 2D rotation. Do it for every pair, get a rotated vector of
+    the same shape. Apply to Q and K before the attention matmul.
+  </p>
+
+  <div class="callout callout--note">
+    <strong>Key property.</strong> For two positions <code>p1</code> and
+    <code>p2</code>, the dot product of rotated Q at <code>p1</code> with
+    rotated K at <code>p2</code> depends on
+    <code>cos((p1 - p2) * θ_i)</code> and <code>sin((p1 - p2) * θ_i)</code>
+    — purely relative.
+  </div>
+
+  <h2>Llama 2's implementation</h2>
+
+  <p>
+    <code>llama2.c/model.py</code> precomputes the cos and sin tables for all
+    positions up to <code>max_seq_len</code>:
+  </p>
+
+<pre><code>def precompute_freqs_cis(dim, end, theta=10000.0):
+    freqs = 1.0 / (theta ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim))
+    t = torch.arange(end, device=freqs.device)
+    freqs = torch.outer(t, freqs).float()
+    freqs_cos = torch.cos(freqs)
+    freqs_sin = torch.sin(freqs)
+    return freqs_cos, freqs_sin</code></pre>
+
+  <p>Then <code>apply_rotary_emb</code> applies them inside the attention block:</p>
+
+<pre><code>xq, xk = apply_rotary_emb(xq, xk, freqs_cos, freqs_sin)</code></pre>
+
+  <p>
+    Critical detail: RoPE is applied to <strong>Q and K only, not V</strong>.
+    The point is that the attention score <code>q @ k.T</code> is what should
+    depend on relative position. The value vectors <code>v</code> carry
+    content, and you want their interpretation to be position-independent so
+    they can be aggregated across positions cleanly.
+  </p>
+
+  <div class="pipeline" aria-label="Where RoPE is applied in the attention block">
+    <span class="stage applied">Q · rotate</span>
+    <span class="arrow">→</span>
+    <span class="stage applied">K · rotate</span>
+    <span class="arrow">→</span>
+    <span class="stage">Q @ K.T</span>
+    <span class="arrow">→</span>
+    <span class="stage skipped">V (unrotated)</span>
+    <span class="arrow">→</span>
+    <span class="stage">attention out</span>
+  </div>
+
+  <h2>RoPE in C</h2>
+
+  <p>
+    In <code>llama2.c/run.c</code>, RoPE is just a loop over head pairs after
+    the QK projections:
+  </p>
+
+<pre><code>// RoPE relative positional encoding: complex-valued rotate q and k in each head
+for (int i = 0; i &lt; dim; i+=2) {
+    int head_dim = i % head_size;
+    float freq = 1.0f / powf(10000.0f, head_dim / (float)head_size);
+    float val = pos * freq;
+    float fcr = cosf(val);
+    float fci = sinf(val);
+    int rotn = i &lt; kv_dim ? 2 : 1;
+    for (int v = 0; v &lt; rotn; v++) {
+        float* vec = v == 0 ? s-&gt;q : s-&gt;k;
+        float v0 = vec[i];
+        float v1 = vec[i+1];
+        vec[i]   = v0 * fcr - v1 * fci;
+        vec[i+1] = v0 * fci + v1 * fcr;
+    }
+}</code></pre>
+
+  <p>
+    The <code>rotn</code> thing accounts for
+    <a href="repos/llama2-c.html">grouped-query attention</a> where there may
+    be fewer K vectors than Q vectors.
+  </p>
+
+  <h2>Length extrapolation</h2>
+
+  <p>
+    RoPE has the famous property that it extrapolates <em>somewhat</em> beyond
+    training context — the model has never seen <code>pos = 5000</code> if
+    trained on 2048 tokens, but the rotation pattern is just continuous trig,
+    so it can be applied. In practice, naive RoPE extrapolation degrades
+    sharply past training context, but several tricks (RoPE base scaling,
+    YaRN, dynamic NTK) extend the effective context window much further. This
+    is how Llama 2 7B got extended to 32k context with relatively cheap
+    fine-tuning.
+  </p>
+
+  <h2>Related</h2>
+
+  <dl>
+    <dt><a href="attention.html">attention</a></dt>
+    <dd>RoPE applies inside attention</dd>
+    <dt><a href="repos/llama2-c.html">repos/llama2-c</a></dt>
+    <dd>full PyTorch + C implementation</dd>
+    <dt><a href="transformer-block.html">transformer-block</a></dt>
+    <dd>GPT-2's positional alternative</dd>
+  </dl>
+</article>
+
+
+</main>
+</body>
+</html>

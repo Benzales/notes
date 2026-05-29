@@ -1,0 +1,925 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' data:; script-src 'none'; object-src 'none'; base-uri 'self'; frame-ancestors 'self';">
+<title>Karpathy's LLM Pedagogy</title>
+<style>
+/*
+ * md-to-redesigned-html default theme
+ * Linear / Vercel docs lineage. Sharp, modern, technical, calm-precise.
+ *
+ * Three layers, three different contracts with the LLM:
+ *
+ *   1. TOKENS (color, type, spacing, radii) — the shared visual language. Every
+ *      page should reference them. This is what makes a folder of notes feel like
+ *      one site. HARD contract: the render prompt instructs Claude to use these.
+ *
+ *   2. BASE STYLES (h1-h6, p, ul, table, code, details, ...) — every standard
+ *      HTML element is styled regardless of class. Pure semantic HTML still looks
+ *      decent. No special opt-in.
+ *
+ *   3. NAMED PATTERNS (.callout, .eyebrow, .index-card, .page--with-toc, ...) —
+ *      pre-baked moves for common shapes. SUGGESTIONS, not rules. The LLM is free
+ *      to invent: per-page <style> blocks and inline styles referencing tokens are
+ *      both encouraged. Coherence comes from tokens, not from class-name policing.
+ *
+ * Edit pattern names with care (they're referenced by the render prompt). Edit
+ * tokens deliberately (they're the entire visual contract).
+ */
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Tokens
+   ────────────────────────────────────────────────────────────────────────── */
+:root {
+  color-scheme: light dark;
+
+  /* Color — light (zinc ramp + violet accent) */
+  --bg:            #ffffff;
+  --bg-elev:       #fafafa;
+  --bg-code:       #f4f4f5;
+  --fg:            #18181b;
+  --fg-secondary:  #3f3f46;
+  --fg-muted:      #71717a;
+  --rule:          #e4e4e7;
+  --rule-strong:   #d4d4d8;
+  --accent:        #6d28d9;
+  --accent-fg:     #ffffff;
+  --accent-soft:   #faf5ff;
+  --accent-rule:   #c4b5fd;
+  --good:          #15803d;
+  --bad:           #b91c1c;
+  --warn:          #b45309;
+
+  /* Type stacks */
+  --font-sans: "Inter", "Geist Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* Type scale (anchored at 15px body) */
+  --text-3xs:  0.6875rem; /* 11 — micro-labels */
+  --text-2xs:  0.75rem;   /* 12 */
+  --text-xs:   0.8125rem; /* 13 */
+  --text-sm:   0.875rem;  /* 14 */
+  --text-base: 0.9375rem; /* 15 — body */
+  --text-md:   1rem;      /* 16 */
+  --text-lg:   1.125rem;  /* 18 */
+  --text-xl:   1.375rem;  /* 22 — h2 */
+  --text-2xl:  1.75rem;   /* 28 — h1 alt */
+  --text-3xl:  2rem;      /* 32 — h1 */
+
+  --leading-tight:   1.2;
+  --leading-snug:    1.35;
+  --leading-base:    1.55;
+  --leading-relaxed: 1.65;
+
+  --tracking-tight:  -0.015em;
+  --tracking-base:   0;
+  --tracking-wide:   0.06em;
+
+  /* Spacing (4px scale) */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 2.5rem;
+  --space-8: 3rem;
+  --space-10: 4rem;
+  --space-12: 5rem;
+
+  /* Layout */
+  --content-width: 680px;
+  --page-width:    1080px;
+  --sidebar-width: 220px;
+  --aside-width:   240px;
+
+  /* Radii — sharp; ≤4px per design doc */
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 6px; /* reserved for larger cards if needed */
+
+  --border: 1px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:            #09090b;
+    --bg-elev:       #18181b;
+    --bg-code:       #18181b;
+    --fg:            #fafafa;
+    --fg-secondary:  #d4d4d8;
+    --fg-muted:      #a1a1aa;
+    --rule:          #27272a;
+    --rule-strong:   #3f3f46;
+    --accent:        #a78bfa;
+    --accent-fg:     #18181b;
+    --accent-soft:   #1e1631;
+    --accent-rule:   #5b21b6;
+    --good:          #4ade80;
+    --bad:           #fca5a5;
+    --warn:          #fbbf24;
+  }
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Reset
+   ────────────────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+* { margin: 0; padding: 0; }
+html { -webkit-text-size-adjust: 100%; tab-size: 4; }
+body { min-height: 100vh; }
+img, picture, video, canvas, svg { display: block; max-width: 100%; }
+input, button, textarea, select { font: inherit; color: inherit; }
+button { background: none; border: none; cursor: pointer; }
+p, h1, h2, h3, h4, h5, h6 { overflow-wrap: break-word; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-sm); }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Base
+   ────────────────────────────────────────────────────────────────────────── */
+html {
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: var(--leading-base);
+  color: var(--fg);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "cv11", "ss01", "ss03"; /* Inter stylistic sets — gracefully ignored elsewhere */
+}
+
+body {
+  font-size: var(--text-base);
+  color: var(--fg-secondary);
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Typography
+   ────────────────────────────────────────────────────────────────────────── */
+h1, h2, h3, h4, h5, h6 {
+  color: var(--fg);
+  font-weight: 600;
+  letter-spacing: var(--tracking-tight);
+  line-height: var(--leading-tight);
+  scroll-margin-top: var(--space-6);
+}
+h1 { font-size: var(--text-3xl); margin-bottom: var(--space-4); }
+h2 { font-size: var(--text-xl); margin: var(--space-7) 0 var(--space-3); }
+h3 { font-size: var(--text-lg); margin: var(--space-5) 0 var(--space-2); }
+h4 { font-size: var(--text-md); margin: var(--space-4) 0 var(--space-2); }
+h5 { font-size: var(--text-base); margin: var(--space-4) 0 var(--space-2); }
+h6 {
+  font-size: var(--text-3xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  margin: var(--space-4) 0 var(--space-2);
+}
+
+p { margin-bottom: var(--space-3); max-width: var(--content-width); }
+p:last-child { margin-bottom: 0; }
+
+small { font-size: var(--text-xs); color: var(--fg-muted); }
+strong { color: var(--fg); font-weight: 600; }
+em { font-style: italic; }
+mark {
+  background: var(--accent-soft);
+  color: var(--fg);
+  padding: 0 0.2em;
+  border-radius: var(--radius-sm);
+}
+abbr[title] {
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  cursor: help;
+}
+
+ul, ol {
+  margin: 0 0 var(--space-3);
+  padding-left: var(--space-5);
+  max-width: var(--content-width);
+}
+ul { list-style: disc; }
+ol { list-style: decimal; }
+li { margin-bottom: var(--space-1); }
+li > ul, li > ol { margin-top: var(--space-1); margin-bottom: 0; }
+
+dl { margin: 0 0 var(--space-3); max-width: var(--content-width); }
+dt { color: var(--fg); font-weight: 600; margin-top: var(--space-3); }
+dd { margin-left: var(--space-4); color: var(--fg-secondary); }
+
+blockquote {
+  margin: var(--space-4) 0;
+  padding: var(--space-1) var(--space-4);
+  border-left: 2px solid var(--rule-strong);
+  color: var(--fg-secondary);
+  font-style: normal;
+  max-width: var(--content-width);
+}
+blockquote > p:last-child { margin-bottom: 0; }
+
+hr {
+  border: none;
+  border-top: 1px solid var(--rule);
+  margin: var(--space-6) 0;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Inline code + pre
+   ────────────────────────────────────────────────────────────────────────── */
+code {
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  background: var(--bg-code);
+  color: var(--fg);
+  padding: 0.1em 0.35em;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--rule);
+}
+
+pre {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  background: var(--bg-code);
+  color: var(--fg);
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--rule);
+  overflow-x: auto;
+  margin: var(--space-4) 0;
+  max-width: 100%;
+}
+pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+  color: inherit;
+}
+
+kbd {
+  font-family: var(--font-mono);
+  font-size: 0.75em;
+  background: var(--bg-elev);
+  color: var(--fg);
+  padding: 0.15em 0.4em;
+  border: 1px solid var(--rule-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Links
+   ────────────────────────────────────────────────────────────────────────── */
+a {
+  color: var(--accent);
+  text-decoration: none;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+a:hover { text-decoration: underline; }
+a.muted { color: var(--fg-secondary); }
+a.muted:hover { color: var(--fg); }
+a.ext::after { content: " ↗"; color: var(--fg-muted); font-size: 0.85em; }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Tables
+   ────────────────────────────────────────────────────────────────────────── */
+table {
+  border-collapse: collapse;
+  width: 100%;
+  max-width: var(--content-width);
+  margin: var(--space-4) 0;
+  font-size: var(--text-sm);
+}
+th, td {
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+}
+th {
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  color: var(--fg-muted);
+  font-weight: 600;
+  border-bottom-color: var(--rule-strong);
+}
+tbody tr:last-child td { border-bottom: none; }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Component primitives — the LLM composes against these
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* Eyebrow: a micro-label above a heading. e.g. "GUIDE" / "REFERENCE" */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  color: var(--fg-muted);
+  margin-bottom: var(--space-2);
+  display: inline-block;
+}
+
+/* Lede: the first paragraph after h1, slightly larger */
+.lede {
+  font-size: var(--text-md);
+  color: var(--fg-secondary);
+  margin-bottom: var(--space-5);
+  max-width: var(--content-width);
+  line-height: var(--leading-relaxed);
+}
+
+/* Callout: bordered block with a colored left rule. */
+.callout {
+  background: var(--bg-elev);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  margin: var(--space-4) 0;
+  max-width: var(--content-width);
+  font-size: var(--text-sm);
+}
+.callout > :last-child { margin-bottom: 0; }
+.callout--note    { border-left-color: var(--accent); }
+.callout--good    { border-left-color: var(--good);  background: color-mix(in srgb, var(--good) 5%, var(--bg-elev)); }
+.callout--warn    { border-left-color: var(--warn);  background: color-mix(in srgb, var(--warn) 6%, var(--bg-elev)); }
+.callout--bad     { border-left-color: var(--bad);   background: color-mix(in srgb, var(--bad) 5%, var(--bg-elev)); }
+.callout strong { color: var(--fg); }
+
+/* Card: bordered surface for grouped content (e.g. index entries) */
+.card {
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  transition: border-color 120ms ease;
+}
+a.card:hover, .card:hover { border-color: var(--rule-strong); }
+.card h2, .card h3 { margin-top: 0; }
+
+/* Tag chip: free-form taxonomy from the LLM */
+.tag {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  color: var(--fg-muted);
+  background: var(--bg-elev);
+  border: 1px solid var(--rule);
+  padding: 0.1em 0.45em;
+  border-radius: var(--radius-sm);
+  text-transform: lowercase;
+  letter-spacing: 0;
+}
+.tag + .tag { margin-left: var(--space-1); }
+a.tag:hover { color: var(--fg); border-color: var(--rule-strong); }
+
+/* Badge: status / category indicator (more prominent than .tag) */
+.badge {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  padding: 0.15em 0.5em;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid var(--accent-rule);
+}
+
+/* Term: glossary term inline */
+.term {
+  border-bottom: 1px dotted var(--accent-rule);
+  color: var(--fg);
+  cursor: help;
+}
+
+/* Native details — collapsibles */
+details {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  margin: var(--space-3) 0;
+  max-width: var(--content-width);
+  background: var(--bg);
+  overflow: hidden;
+}
+details summary {
+  list-style: none;
+  cursor: pointer;
+  padding: var(--space-3) var(--space-4);
+  color: var(--fg);
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+details summary::-webkit-details-marker { display: none; }
+details summary::before {
+  content: "›";
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  display: inline-block;
+  transition: transform 120ms ease;
+  font-size: 1.1em;
+  line-height: 1;
+}
+details[open] summary::before { transform: rotate(90deg); }
+details > :not(summary) {
+  padding: 0 var(--space-4) var(--space-3);
+}
+
+/* Figure + caption */
+figure { margin: var(--space-4) 0; max-width: var(--content-width); }
+figcaption {
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+  margin-top: var(--space-2);
+  text-align: left;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Layout primitives
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* .page: a generous single-column page wrapper with default padding */
+.page {
+  max-width: var(--page-width);
+  margin: 0 auto;
+  padding: var(--space-8) var(--space-5) var(--space-12);
+}
+
+/* .page--with-aside: main content + sticky aside grid */
+.page--with-aside {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--aside-width);
+  gap: var(--space-7);
+}
+.page--with-aside > aside {
+  position: sticky;
+  top: var(--space-6);
+  align-self: start;
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+}
+@media (max-width: 880px) {
+  .page--with-aside { grid-template-columns: 1fr; }
+  .page--with-aside > aside { position: static; }
+}
+
+/* .page--with-toc: sticky TOC on the LEFT */
+.page--with-toc {
+  display: grid;
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  gap: var(--space-7);
+}
+.page--with-toc > nav {
+  position: sticky;
+  top: var(--space-6);
+  align-self: start;
+  font-size: var(--text-xs);
+}
+.page--with-toc > nav a {
+  display: block;
+  padding: var(--space-1) 0 var(--space-1) var(--space-3);
+  border-left: 1px solid var(--rule);
+  color: var(--fg-muted);
+}
+.page--with-toc > nav a:hover, .page--with-toc > nav a[aria-current="page"] {
+  color: var(--fg);
+  border-left-color: var(--accent);
+}
+@media (max-width: 880px) {
+  .page--with-toc { grid-template-columns: 1fr; }
+  .page--with-toc > nav { display: none; }
+}
+
+/* article: the content body */
+article { max-width: var(--content-width); }
+article > * + h2 { margin-top: var(--space-7); }
+article > * + h3 { margin-top: var(--space-5); }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Index page — the hub
+   ────────────────────────────────────────────────────────────────────────── */
+.index-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--space-4);
+  margin: var(--space-5) 0;
+  max-width: 100%;
+}
+.index-card {
+  display: block;
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  color: var(--fg-secondary);
+  transition: border-color 120ms ease, transform 120ms ease;
+}
+.index-card:hover { border-color: var(--rule-strong); text-decoration: none; }
+.index-card h3 {
+  font-size: var(--text-md);
+  margin: 0 0 var(--space-2);
+  color: var(--fg);
+}
+.index-card p {
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+  margin-bottom: var(--space-3);
+  line-height: var(--leading-snug);
+}
+.index-card .tags { margin-top: auto; }
+
+/* Filter bar — for tag-driven grouping on index */
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin: var(--space-4) 0;
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--rule);
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Utilities
+   ────────────────────────────────────────────────────────────────────────── */
+.muted { color: var(--fg-muted); }
+.mono  { font-family: var(--font-mono); }
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0);
+  white-space: nowrap; border: 0;
+}
+
+</style>
+</head>
+<body>
+<main class="page">
+
+<style>
+  .hub-aside {
+    font-family: var(--font-mono);
+    font-size: var(--text-3xs);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    color: var(--fg-muted);
+    margin-bottom: var(--space-3);
+  }
+  .reading-path {
+    list-style: none;
+    padding-left: 0;
+    counter-reset: step;
+    max-width: var(--content-width);
+    margin: var(--space-4) 0;
+  }
+  .reading-path > li {
+    counter-increment: step;
+    position: relative;
+    padding-left: var(--space-7);
+    padding-bottom: var(--space-3);
+    margin-bottom: 0;
+    border-left: 1px solid var(--rule);
+    margin-left: var(--space-3);
+  }
+  .reading-path > li::before {
+    content: counter(step);
+    position: absolute;
+    left: calc(-1 * var(--space-3) - 0.75em);
+    top: -0.15em;
+    width: 1.5em;
+    height: 1.5em;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-mono);
+    font-size: var(--text-3xs);
+    background: var(--bg);
+    color: var(--fg-muted);
+    border: 1px solid var(--rule-strong);
+    border-radius: 999px;
+    line-height: 1;
+  }
+  .reading-path > li:last-child { border-left-color: transparent; padding-bottom: 0; }
+  .reading-path .step-title {
+    display: block;
+    color: var(--fg);
+    font-weight: 600;
+    margin-bottom: var(--space-1);
+  }
+  .reading-path .step-note {
+    display: block;
+    font-size: var(--text-sm);
+    color: var(--fg-muted);
+  }
+
+  .section-cluster {
+    border: 1px solid var(--rule);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    margin: var(--space-4) 0;
+    max-width: var(--content-width);
+  }
+  .section-cluster table { margin: 0; }
+  .section-cluster th, .section-cluster td { padding: var(--space-2) var(--space-4); }
+  .section-cluster td:last-child { text-align: right; font-family: var(--font-mono); font-size: var(--text-xs); }
+
+  .compare-table th, .compare-table td { font-size: var(--text-xs); vertical-align: top; }
+  .compare-table thead th { white-space: normal; }
+  .compare-table tbody th {
+    font-family: var(--font-sans);
+    font-size: var(--text-sm);
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--fg);
+    font-weight: 600;
+    border-bottom-color: var(--rule);
+  }
+  .compare-table .col-family {
+    font-family: var(--font-mono);
+    font-size: var(--text-3xs);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    color: var(--fg-muted);
+  }
+  .compare-table .col-family small {
+    display: block;
+    font-family: var(--font-sans);
+    font-size: var(--text-3xs);
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--fg-muted);
+    margin-top: 2px;
+  }
+
+  .skeleton-note {
+    font-size: var(--text-sm);
+    color: var(--fg-secondary);
+    margin-top: var(--space-3);
+    max-width: var(--content-width);
+  }
+
+  .scope-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: var(--space-3);
+    margin: var(--space-4) 0;
+    max-width: var(--content-width);
+  }
+  .scope-card {
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--bad);
+    border-radius: var(--radius-md);
+    padding: var(--space-3) var(--space-4);
+    background: var(--bg-elev);
+  }
+  .scope-card strong {
+    display: block;
+    margin-bottom: var(--space-1);
+    color: var(--fg);
+    font-size: var(--text-sm);
+  }
+  .scope-card span {
+    font-size: var(--text-xs);
+    color: var(--fg-muted);
+    line-height: var(--leading-snug);
+  }
+
+  .scope-in {
+    border-left-color: var(--good);
+    background: color-mix(in srgb, var(--good) 5%, var(--bg-elev));
+    margin-top: var(--space-3);
+    max-width: var(--content-width);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--good);
+    border-radius: var(--radius-md);
+    padding: var(--space-3) var(--space-4);
+    font-size: var(--text-sm);
+  }
+  .scope-in strong { color: var(--fg); }
+</style>
+<article>
+
+  <span class="eyebrow">Hub · Overview</span>
+  <h1>Karpathy's LLM Pedagogy</h1>
+
+  <p class="lede">
+    This wiki covers Andrej Karpathy's published teaching corpus on language models — seven open-source repositories and a nine-lecture YouTube series ("Neural Networks: Zero to Hero"). Together they trace the technical lineage from "what is backpropagation" through to "here is a working reproduction of GPT-2 (124M)."
+  </p>
+
+  <p>
+    The corpus is unusually coherent. The same patterns and abstractions recur across repos — <code>Block</code>, <code>MultiHeadAttention</code>, <code>configure_optimizers</code>, <code>estimate_mfu</code>, <code>from_pretrained</code> — at progressively bigger scales. Reading any one repo in isolation works, but reading them in order shows you the underlying ideas being refined.
+  </p>
+
+  <h2>Reading guide</h2>
+
+  <p>If you're starting from zero and want the full arc, the order is:</p>
+
+  <ol class="reading-path">
+    <li>
+      <span class="step-title"><a href="zero-to-hero-arc.html"><code>zero-to-hero-arc</code></a></span>
+      <span class="step-note">The lecture map. Read this first.</span>
+    </li>
+    <li>
+      <span class="step-title"><a href="repos/micrograd.html"><code>repos/micrograd</code></a></span>
+      <span class="step-note">Scalar autograd. The conceptual root.</span>
+    </li>
+    <li>
+      <span class="step-title"><a href="backpropagation.html"><code>backpropagation</code></a> and <a href="value-class.html"><code>value-class</code></a></span>
+      <span class="step-note">The algorithm and its data structure.</span>
+    </li>
+    <li>
+      <span class="step-title"><a href="repos/makemore.html"><code>repos/makemore</code></a></span>
+      <span class="step-note">First real LMs. Bigram → MLP → ... → Transformer.</span>
+    </li>
+    <li>
+      <span class="step-title"><a href="repos/ng-video-lecture.html"><code>repos/ng-video-lecture</code></a></span>
+      <span class="step-note">Character-level GPT on Tiny Shakespeare.</span>
+    </li>
+    <li>
+      <span class="step-title"><a href="repos/nanoGPT.html"><code>repos/nanoGPT</code></a></span>
+      <span class="step-note">Production-grade GPT-2 implementation.</span>
+    </li>
+    <li>
+      <span class="step-title"><a href="repos/build-nanogpt.html"><code>repos/build-nanogpt</code></a></span>
+      <span class="step-note">Faithful GPT-2 reproduction with every optimization.</span>
+    </li>
+    <li>
+      <span class="step-title"><a href="repos/llama2-c.html"><code>repos/llama2-c</code></a></span>
+      <span class="step-note">Llama 2 in PyTorch + pure C inference. The "modern" architecture.</span>
+    </li>
+    <li>
+      <span class="step-title"><a href="repos/llm-c.html"><code>repos/llm-c</code></a></span>
+      <span class="step-note">Same training task as build-nanogpt, in pure C/CUDA.</span>
+    </li>
+  </ol>
+
+  <p>If you want to learn a specific concept, jump to the concept page; each one cross-references the repos that demonstrate it.</p>
+
+  <h2>The architecture, in pieces</h2>
+
+  <p>The transformer architecture as Karpathy teaches it, broken into independent pieces:</p>
+
+  <div class="section-cluster">
+    <table>
+      <thead>
+        <tr><th>Topic</th><th>Page</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>The repeating unit</td><td><a href="transformer-block.html"><code>transformer-block</code></a></td></tr>
+        <tr><td>Information mixing across positions</td><td><a href="attention.html"><code>attention</code></a></td></tr>
+        <tr><td>Stability mechanism for deep stacks</td><td><a href="residual-connections.html"><code>residual-connections</code></a></td></tr>
+        <tr><td>Per-layer normalization</td><td><a href="layernorm-vs-rmsnorm.html"><code>layernorm-vs-rmsnorm</code></a></td></tr>
+        <tr><td>Per-position nonlinearity</td><td><a href="gelu-and-swiglu.html"><code>gelu-and-swiglu</code></a></td></tr>
+        <tr><td>Positional information (GPT-2 vs Llama)</td><td><a href="rope.html"><code>rope</code></a></td></tr>
+        <tr><td>Vocabulary and embedding</td><td><a href="tokenization.html"><code>tokenization</code></a>, <a href="character-vs-bpe.html"><code>character-vs-bpe</code></a></td></tr>
+        <tr><td>Embedding-unembedding sharing</td><td><a href="weight-tying.html"><code>weight-tying</code></a></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>Training, in pieces</h2>
+
+  <div class="section-cluster">
+    <table>
+      <thead>
+        <tr><th>Topic</th><th>Page</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Gradient computation</td><td><a href="backpropagation.html"><code>backpropagation</code></a>, <a href="value-class.html"><code>value-class</code></a></td></tr>
+        <tr><td>Parameter update</td><td><a href="adamw.html"><code>adamw</code></a></td></tr>
+        <tr><td>Initialization</td><td><a href="weight-init.html"><code>weight-init</code></a></td></tr>
+        <tr><td>Learning rate over time</td><td><a href="learning-rate-schedules.html"><code>learning-rate-schedules</code></a></td></tr>
+        <tr><td>Batches and effective batch size</td><td><a href="gradient-accumulation.html"><code>gradient-accumulation</code></a>, <a href="dataloader.html"><code>dataloader</code></a></td></tr>
+        <tr><td>Numerical precision</td><td><a href="mixed-precision-and-mfu.html"><code>mixed-precision-and-mfu</code></a></td></tr>
+        <tr><td>Keeping training alive</td><td><a href="training-stability.html"><code>training-stability</code></a></td></tr>
+        <tr><td>Downstream evaluation</td><td><a href="hellaswag-eval.html"><code>hellaswag-eval</code></a></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>Inference</h2>
+
+  <div class="section-cluster">
+    <table>
+      <thead>
+        <tr><th>Topic</th><th>Page</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Token selection</td><td><a href="sampling.html"><code>sampling</code></a></td></tr>
+        <tr><td>Generation acceleration</td><td><a href="kv-cache.html"><code>kv-cache</code></a></td></tr>
+        <tr><td>Pure-C runtime</td><td><a href="repos/llama2-c.html"><code>repos/llama2-c</code></a></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>Three "model families" to compare</h2>
+
+  <p>The corpus contains three subtly different transformer architectures, useful to compare against each other:</p>
+
+  <div style="overflow-x:auto;max-width:var(--content-width)">
+    <table class="compare-table">
+      <thead>
+        <tr>
+          <th>Component</th>
+          <th class="col-family">GPT-2 <small>ng-video-lecture, nanoGPT, build-nanogpt, llm.c</small></th>
+          <th class="col-family">Llama 2 <small>llama2.c</small></th>
+          <th class="col-family">makemore Transformer</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th>Normalization</th>
+          <td><a href="layernorm-vs-rmsnorm.html">LayerNorm</a></td>
+          <td><a href="layernorm-vs-rmsnorm.html">RMSNorm</a></td>
+          <td>LayerNorm</td>
+        </tr>
+        <tr>
+          <th>Positional</th>
+          <td>Learned embedding</td>
+          <td><a href="rope.html">RoPE</a></td>
+          <td>Learned embedding</td>
+        </tr>
+        <tr>
+          <th>Activation</th>
+          <td><a href="gelu-and-swiglu.html">GELU</a></td>
+          <td><a href="gelu-and-swiglu.html">SwiGLU</a></td>
+          <td>GELU</td>
+        </tr>
+        <tr>
+          <th>Tokenizer</th>
+          <td>BPE (50257)</td>
+          <td>SentencePiece BPE (32000)</td>
+          <td>character-level</td>
+        </tr>
+        <tr>
+          <th>Attention</th>
+          <td>Multi-head</td>
+          <td>Grouped-query</td>
+          <td>Multi-head</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="skeleton-note">
+    Same skeleton, different organs. Once you know the skeleton (the <a href="transformer-block.html">transformer block</a> wrapped in residuals and a stack), swapping organs is straightforward.
+  </p>
+
+  <h2>What's not in this wiki</h2>
+
+  <p>Things outside the scope of the corpus:</p>
+
+  <div class="scope-grid">
+    <div class="scope-card">
+      <strong>Post-training (SFT, RLHF, DPO)</strong>
+      <span>None of these repos do instruction tuning or alignment. nanochat does, but it's not in the corpus.</span>
+    </div>
+    <div class="scope-card">
+      <strong>Model parallelism beyond DDP</strong>
+      <span>No tensor parallelism, no pipeline parallelism. llm.c has ZeRO-1 optimizer sharding but no model sharding.</span>
+    </div>
+    <div class="scope-card">
+      <strong>Multimodal</strong>
+      <span>Text-only throughout.</span>
+    </div>
+    <div class="scope-card">
+      <strong>MoE</strong>
+      <span>Dense models only.</span>
+    </div>
+  </div>
+
+  <div class="scope-in">
+    <strong>In scope:</strong> dense, decoder-only, pretraining + base inference, up to GPT-2 / Llama 2 scale. Within that scope it's the most complete teaching resource available.
+  </div>
+
+  <h2>Cross-reference conventions</h2>
+
+  <p>
+    Every page in this wiki uses markdown reference links: <code>[name](name.md)</code> for concepts, <code>[name](repos/name.md)</code> for repos. The link text is usually the unqualified name; the path tells you whether it's a concept or a repo page.
+  </p>
+
+  <p>
+    For agents post-processing this wiki: every page is a self-contained topic that can be rendered as a single HTML page. Internal links between pages are the primary structural signal of the wiki graph. The <code>concepts/</code> flat layout was rejected in favor of having concepts at the wiki root and repos in a subdirectory — concepts are first-class citizens, repos are case studies that ground them.
+  </p>
+
+</article>
+
+
+</main>
+</body>
+</html>

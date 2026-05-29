@@ -1,0 +1,891 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' data:; script-src 'none'; object-src 'none'; base-uri 'self'; frame-ancestors 'self';">
+<title>llama2.c</title>
+<style>
+/*
+ * md-to-redesigned-html default theme
+ * Linear / Vercel docs lineage. Sharp, modern, technical, calm-precise.
+ *
+ * Three layers, three different contracts with the LLM:
+ *
+ *   1. TOKENS (color, type, spacing, radii) — the shared visual language. Every
+ *      page should reference them. This is what makes a folder of notes feel like
+ *      one site. HARD contract: the render prompt instructs Claude to use these.
+ *
+ *   2. BASE STYLES (h1-h6, p, ul, table, code, details, ...) — every standard
+ *      HTML element is styled regardless of class. Pure semantic HTML still looks
+ *      decent. No special opt-in.
+ *
+ *   3. NAMED PATTERNS (.callout, .eyebrow, .index-card, .page--with-toc, ...) —
+ *      pre-baked moves for common shapes. SUGGESTIONS, not rules. The LLM is free
+ *      to invent: per-page <style> blocks and inline styles referencing tokens are
+ *      both encouraged. Coherence comes from tokens, not from class-name policing.
+ *
+ * Edit pattern names with care (they're referenced by the render prompt). Edit
+ * tokens deliberately (they're the entire visual contract).
+ */
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Tokens
+   ────────────────────────────────────────────────────────────────────────── */
+:root {
+  color-scheme: light dark;
+
+  /* Color — light (zinc ramp + violet accent) */
+  --bg:            #ffffff;
+  --bg-elev:       #fafafa;
+  --bg-code:       #f4f4f5;
+  --fg:            #18181b;
+  --fg-secondary:  #3f3f46;
+  --fg-muted:      #71717a;
+  --rule:          #e4e4e7;
+  --rule-strong:   #d4d4d8;
+  --accent:        #6d28d9;
+  --accent-fg:     #ffffff;
+  --accent-soft:   #faf5ff;
+  --accent-rule:   #c4b5fd;
+  --good:          #15803d;
+  --bad:           #b91c1c;
+  --warn:          #b45309;
+
+  /* Type stacks */
+  --font-sans: "Inter", "Geist Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* Type scale (anchored at 15px body) */
+  --text-3xs:  0.6875rem; /* 11 — micro-labels */
+  --text-2xs:  0.75rem;   /* 12 */
+  --text-xs:   0.8125rem; /* 13 */
+  --text-sm:   0.875rem;  /* 14 */
+  --text-base: 0.9375rem; /* 15 — body */
+  --text-md:   1rem;      /* 16 */
+  --text-lg:   1.125rem;  /* 18 */
+  --text-xl:   1.375rem;  /* 22 — h2 */
+  --text-2xl:  1.75rem;   /* 28 — h1 alt */
+  --text-3xl:  2rem;      /* 32 — h1 */
+
+  --leading-tight:   1.2;
+  --leading-snug:    1.35;
+  --leading-base:    1.55;
+  --leading-relaxed: 1.65;
+
+  --tracking-tight:  -0.015em;
+  --tracking-base:   0;
+  --tracking-wide:   0.06em;
+
+  /* Spacing (4px scale) */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 2.5rem;
+  --space-8: 3rem;
+  --space-10: 4rem;
+  --space-12: 5rem;
+
+  /* Layout */
+  --content-width: 680px;
+  --page-width:    1080px;
+  --sidebar-width: 220px;
+  --aside-width:   240px;
+
+  /* Radii — sharp; ≤4px per design doc */
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 6px; /* reserved for larger cards if needed */
+
+  --border: 1px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:            #09090b;
+    --bg-elev:       #18181b;
+    --bg-code:       #18181b;
+    --fg:            #fafafa;
+    --fg-secondary:  #d4d4d8;
+    --fg-muted:      #a1a1aa;
+    --rule:          #27272a;
+    --rule-strong:   #3f3f46;
+    --accent:        #a78bfa;
+    --accent-fg:     #18181b;
+    --accent-soft:   #1e1631;
+    --accent-rule:   #5b21b6;
+    --good:          #4ade80;
+    --bad:           #fca5a5;
+    --warn:          #fbbf24;
+  }
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Reset
+   ────────────────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+* { margin: 0; padding: 0; }
+html { -webkit-text-size-adjust: 100%; tab-size: 4; }
+body { min-height: 100vh; }
+img, picture, video, canvas, svg { display: block; max-width: 100%; }
+input, button, textarea, select { font: inherit; color: inherit; }
+button { background: none; border: none; cursor: pointer; }
+p, h1, h2, h3, h4, h5, h6 { overflow-wrap: break-word; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-sm); }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Base
+   ────────────────────────────────────────────────────────────────────────── */
+html {
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: var(--leading-base);
+  color: var(--fg);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "cv11", "ss01", "ss03"; /* Inter stylistic sets — gracefully ignored elsewhere */
+}
+
+body {
+  font-size: var(--text-base);
+  color: var(--fg-secondary);
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Typography
+   ────────────────────────────────────────────────────────────────────────── */
+h1, h2, h3, h4, h5, h6 {
+  color: var(--fg);
+  font-weight: 600;
+  letter-spacing: var(--tracking-tight);
+  line-height: var(--leading-tight);
+  scroll-margin-top: var(--space-6);
+}
+h1 { font-size: var(--text-3xl); margin-bottom: var(--space-4); }
+h2 { font-size: var(--text-xl); margin: var(--space-7) 0 var(--space-3); }
+h3 { font-size: var(--text-lg); margin: var(--space-5) 0 var(--space-2); }
+h4 { font-size: var(--text-md); margin: var(--space-4) 0 var(--space-2); }
+h5 { font-size: var(--text-base); margin: var(--space-4) 0 var(--space-2); }
+h6 {
+  font-size: var(--text-3xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  margin: var(--space-4) 0 var(--space-2);
+}
+
+p { margin-bottom: var(--space-3); max-width: var(--content-width); }
+p:last-child { margin-bottom: 0; }
+
+small { font-size: var(--text-xs); color: var(--fg-muted); }
+strong { color: var(--fg); font-weight: 600; }
+em { font-style: italic; }
+mark {
+  background: var(--accent-soft);
+  color: var(--fg);
+  padding: 0 0.2em;
+  border-radius: var(--radius-sm);
+}
+abbr[title] {
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  cursor: help;
+}
+
+ul, ol {
+  margin: 0 0 var(--space-3);
+  padding-left: var(--space-5);
+  max-width: var(--content-width);
+}
+ul { list-style: disc; }
+ol { list-style: decimal; }
+li { margin-bottom: var(--space-1); }
+li > ul, li > ol { margin-top: var(--space-1); margin-bottom: 0; }
+
+dl { margin: 0 0 var(--space-3); max-width: var(--content-width); }
+dt { color: var(--fg); font-weight: 600; margin-top: var(--space-3); }
+dd { margin-left: var(--space-4); color: var(--fg-secondary); }
+
+blockquote {
+  margin: var(--space-4) 0;
+  padding: var(--space-1) var(--space-4);
+  border-left: 2px solid var(--rule-strong);
+  color: var(--fg-secondary);
+  font-style: normal;
+  max-width: var(--content-width);
+}
+blockquote > p:last-child { margin-bottom: 0; }
+
+hr {
+  border: none;
+  border-top: 1px solid var(--rule);
+  margin: var(--space-6) 0;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Inline code + pre
+   ────────────────────────────────────────────────────────────────────────── */
+code {
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  background: var(--bg-code);
+  color: var(--fg);
+  padding: 0.1em 0.35em;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--rule);
+}
+
+pre {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  background: var(--bg-code);
+  color: var(--fg);
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--rule);
+  overflow-x: auto;
+  margin: var(--space-4) 0;
+  max-width: 100%;
+}
+pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+  color: inherit;
+}
+
+kbd {
+  font-family: var(--font-mono);
+  font-size: 0.75em;
+  background: var(--bg-elev);
+  color: var(--fg);
+  padding: 0.15em 0.4em;
+  border: 1px solid var(--rule-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Links
+   ────────────────────────────────────────────────────────────────────────── */
+a {
+  color: var(--accent);
+  text-decoration: none;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+a:hover { text-decoration: underline; }
+a.muted { color: var(--fg-secondary); }
+a.muted:hover { color: var(--fg); }
+a.ext::after { content: " ↗"; color: var(--fg-muted); font-size: 0.85em; }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Tables
+   ────────────────────────────────────────────────────────────────────────── */
+table {
+  border-collapse: collapse;
+  width: 100%;
+  max-width: var(--content-width);
+  margin: var(--space-4) 0;
+  font-size: var(--text-sm);
+}
+th, td {
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+}
+th {
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  color: var(--fg-muted);
+  font-weight: 600;
+  border-bottom-color: var(--rule-strong);
+}
+tbody tr:last-child td { border-bottom: none; }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Component primitives — the LLM composes against these
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* Eyebrow: a micro-label above a heading. e.g. "GUIDE" / "REFERENCE" */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  color: var(--fg-muted);
+  margin-bottom: var(--space-2);
+  display: inline-block;
+}
+
+/* Lede: the first paragraph after h1, slightly larger */
+.lede {
+  font-size: var(--text-md);
+  color: var(--fg-secondary);
+  margin-bottom: var(--space-5);
+  max-width: var(--content-width);
+  line-height: var(--leading-relaxed);
+}
+
+/* Callout: bordered block with a colored left rule. */
+.callout {
+  background: var(--bg-elev);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  margin: var(--space-4) 0;
+  max-width: var(--content-width);
+  font-size: var(--text-sm);
+}
+.callout > :last-child { margin-bottom: 0; }
+.callout--note    { border-left-color: var(--accent); }
+.callout--good    { border-left-color: var(--good);  background: color-mix(in srgb, var(--good) 5%, var(--bg-elev)); }
+.callout--warn    { border-left-color: var(--warn);  background: color-mix(in srgb, var(--warn) 6%, var(--bg-elev)); }
+.callout--bad     { border-left-color: var(--bad);   background: color-mix(in srgb, var(--bad) 5%, var(--bg-elev)); }
+.callout strong { color: var(--fg); }
+
+/* Card: bordered surface for grouped content (e.g. index entries) */
+.card {
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  transition: border-color 120ms ease;
+}
+a.card:hover, .card:hover { border-color: var(--rule-strong); }
+.card h2, .card h3 { margin-top: 0; }
+
+/* Tag chip: free-form taxonomy from the LLM */
+.tag {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  color: var(--fg-muted);
+  background: var(--bg-elev);
+  border: 1px solid var(--rule);
+  padding: 0.1em 0.45em;
+  border-radius: var(--radius-sm);
+  text-transform: lowercase;
+  letter-spacing: 0;
+}
+.tag + .tag { margin-left: var(--space-1); }
+a.tag:hover { color: var(--fg); border-color: var(--rule-strong); }
+
+/* Badge: status / category indicator (more prominent than .tag) */
+.badge {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  padding: 0.15em 0.5em;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid var(--accent-rule);
+}
+
+/* Term: glossary term inline */
+.term {
+  border-bottom: 1px dotted var(--accent-rule);
+  color: var(--fg);
+  cursor: help;
+}
+
+/* Native details — collapsibles */
+details {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  margin: var(--space-3) 0;
+  max-width: var(--content-width);
+  background: var(--bg);
+  overflow: hidden;
+}
+details summary {
+  list-style: none;
+  cursor: pointer;
+  padding: var(--space-3) var(--space-4);
+  color: var(--fg);
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+details summary::-webkit-details-marker { display: none; }
+details summary::before {
+  content: "›";
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  display: inline-block;
+  transition: transform 120ms ease;
+  font-size: 1.1em;
+  line-height: 1;
+}
+details[open] summary::before { transform: rotate(90deg); }
+details > :not(summary) {
+  padding: 0 var(--space-4) var(--space-3);
+}
+
+/* Figure + caption */
+figure { margin: var(--space-4) 0; max-width: var(--content-width); }
+figcaption {
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+  margin-top: var(--space-2);
+  text-align: left;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Layout primitives
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* .page: a generous single-column page wrapper with default padding */
+.page {
+  max-width: var(--page-width);
+  margin: 0 auto;
+  padding: var(--space-8) var(--space-5) var(--space-12);
+}
+
+/* .page--with-aside: main content + sticky aside grid */
+.page--with-aside {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--aside-width);
+  gap: var(--space-7);
+}
+.page--with-aside > aside {
+  position: sticky;
+  top: var(--space-6);
+  align-self: start;
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+}
+@media (max-width: 880px) {
+  .page--with-aside { grid-template-columns: 1fr; }
+  .page--with-aside > aside { position: static; }
+}
+
+/* .page--with-toc: sticky TOC on the LEFT */
+.page--with-toc {
+  display: grid;
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  gap: var(--space-7);
+}
+.page--with-toc > nav {
+  position: sticky;
+  top: var(--space-6);
+  align-self: start;
+  font-size: var(--text-xs);
+}
+.page--with-toc > nav a {
+  display: block;
+  padding: var(--space-1) 0 var(--space-1) var(--space-3);
+  border-left: 1px solid var(--rule);
+  color: var(--fg-muted);
+}
+.page--with-toc > nav a:hover, .page--with-toc > nav a[aria-current="page"] {
+  color: var(--fg);
+  border-left-color: var(--accent);
+}
+@media (max-width: 880px) {
+  .page--with-toc { grid-template-columns: 1fr; }
+  .page--with-toc > nav { display: none; }
+}
+
+/* article: the content body */
+article { max-width: var(--content-width); }
+article > * + h2 { margin-top: var(--space-7); }
+article > * + h3 { margin-top: var(--space-5); }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Index page — the hub
+   ────────────────────────────────────────────────────────────────────────── */
+.index-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--space-4);
+  margin: var(--space-5) 0;
+  max-width: 100%;
+}
+.index-card {
+  display: block;
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  color: var(--fg-secondary);
+  transition: border-color 120ms ease, transform 120ms ease;
+}
+.index-card:hover { border-color: var(--rule-strong); text-decoration: none; }
+.index-card h3 {
+  font-size: var(--text-md);
+  margin: 0 0 var(--space-2);
+  color: var(--fg);
+}
+.index-card p {
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+  margin-bottom: var(--space-3);
+  line-height: var(--leading-snug);
+}
+.index-card .tags { margin-top: auto; }
+
+/* Filter bar — for tag-driven grouping on index */
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin: var(--space-4) 0;
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--rule);
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Utilities
+   ────────────────────────────────────────────────────────────────────────── */
+.muted { color: var(--fg-muted); }
+.mono  { font-family: var(--font-mono); }
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0);
+  white-space: nowrap; border: 0;
+}
+
+</style>
+</head>
+<body>
+<main class="page">
+
+<style>
+  .repo-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    align-items: center;
+    margin-bottom: var(--space-4);
+  }
+  .arch-swap {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    gap: var(--space-3) var(--space-4);
+    align-items: center;
+    margin: var(--space-4) 0;
+    max-width: var(--content-width);
+  }
+  .arch-swap__col {
+    font-family: var(--font-mono);
+    font-size: var(--text-3xs);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    color: var(--fg-muted);
+  }
+  .arch-swap__cell {
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--rule);
+    border-radius: var(--radius-sm);
+    background: var(--bg-elev);
+    font-size: var(--text-sm);
+    color: var(--fg);
+  }
+  .arch-swap__arrow {
+    color: var(--accent);
+    font-family: var(--font-mono);
+    text-align: center;
+  }
+  .repo-tree {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: var(--space-1) var(--space-4);
+    font-size: var(--text-xs);
+    margin: var(--space-4) 0;
+    max-width: var(--content-width);
+    padding: var(--space-4);
+    background: var(--bg-code);
+    border: 1px solid var(--rule);
+    border-radius: var(--radius-md);
+  }
+  .repo-tree__name {
+    font-family: var(--font-mono);
+    color: var(--fg);
+  }
+  .repo-tree__desc {
+    color: var(--fg-muted);
+  }
+  .forward-flow {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+    align-items: center;
+    margin: var(--space-4) 0;
+    padding: var(--space-3);
+    background: var(--bg-elev);
+    border: 1px solid var(--rule);
+    border-radius: var(--radius-md);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    max-width: var(--content-width);
+  }
+  .forward-flow__step {
+    color: var(--fg);
+    padding: 0.1em 0.4em;
+    background: var(--bg);
+    border: 1px solid var(--rule);
+    border-radius: var(--radius-sm);
+  }
+  .forward-flow__arrow {
+    color: var(--accent);
+  }
+  .perf-row {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-4);
+    padding: var(--space-2) 0;
+    border-bottom: 1px solid var(--rule);
+  }
+  .perf-row:last-child { border-bottom: none; }
+  .perf-row__label { color: var(--fg-secondary); }
+  .perf-row__value {
+    font-family: var(--font-mono);
+    color: var(--fg);
+  }
+</style>
+<article>
+  <span class="eyebrow">Repos · Inference Lineage</span>
+  <h1>llama2.c</h1>
+  <p class="lede">The inference-side counterpart. While the GPT-2 line of repos focuses on <em>training</em>, llama2.c focuses on inference. Train the Llama 2 architecture in PyTorch then inference it from a single ~700-line C file. No CUDA, no dependencies, just <code>gcc</code>.</p>
+
+  <div class="repo-meta">
+    <span class="badge">Inference</span>
+    <span class="tag">llama 2</span>
+    <span class="tag">pure c</span>
+    <span class="tag">mmap</span>
+    <span class="tag">gqa</span>
+    <span class="tag">int8 quant</span>
+  </div>
+
+  <blockquote>
+    <p>Have you ever wanted to inference a baby Llama 2 model in pure C? No? Well, now you can!</p>
+    <p><small>— From the README</small></p>
+  </blockquote>
+
+  <h2>What's in the repo</h2>
+
+  <div class="repo-tree">
+    <span class="repo-tree__name">model.py</span>
+    <span class="repo-tree__desc">~343 lines — Llama 2 in PyTorch (RMSNorm, RoPE, SwiGLU)</span>
+
+    <span class="repo-tree__name">train.py</span>
+    <span class="repo-tree__desc">PyTorch training loop, adapted from nanoGPT</span>
+
+    <span class="repo-tree__name">export.py</span>
+    <span class="repo-tree__desc">converts PyTorch checkpoint → llama2.c binary format</span>
+
+    <span class="repo-tree__name">run.c</span>
+    <span class="repo-tree__desc">~973 lines — full C inference engine</span>
+
+    <span class="repo-tree__name">runq.c</span>
+    <span class="repo-tree__desc">quantized (int8) inference</span>
+
+    <span class="repo-tree__name">tokenizer.py / .bin / .model</span>
+    <span class="repo-tree__desc">SentencePiece BPE</span>
+
+    <span class="repo-tree__name">tinystories.py</span>
+    <span class="repo-tree__desc">data prep for the TinyStories corpus</span>
+
+    <span class="repo-tree__name">doc/</span>
+    <span class="repo-tree__desc">stories260K.md, train_llama_tokenizer.md</span>
+  </div>
+
+  <p>The whole repo is "fullstack train + inference" for Llama 2 at small scale: train a model on TinyStories, export it to a <code>.bin</code> file, run it with <code>./run</code>.</p>
+
+  <h2>Why Llama 2's architecture differs from GPT-2</h2>
+
+  <p>Same general shape as GPT-2 (a stack of pre-norm transformer blocks, autoregressive next-token prediction), but with three swaps:</p>
+
+  <div class="arch-swap">
+    <div class="arch-swap__col">GPT-2</div>
+    <div></div>
+    <div class="arch-swap__col">Llama 2</div>
+
+    <div class="arch-swap__cell"><a href="../layernorm-vs-rmsnorm.html">LayerNorm</a></div>
+    <div class="arch-swap__arrow">→</div>
+    <div class="arch-swap__cell"><a href="../layernorm-vs-rmsnorm.html">RMSNorm</a></div>
+
+    <div class="arch-swap__cell">Learned positional embedding</div>
+    <div class="arch-swap__arrow">→</div>
+    <div class="arch-swap__cell"><a href="../rope.html">RoPE</a> (applied inside attention)</div>
+
+    <div class="arch-swap__cell"><a href="../gelu-and-swiglu.html">GELU</a> MLP (2 linears)</div>
+    <div class="arch-swap__arrow">→</div>
+    <div class="arch-swap__cell"><a href="../gelu-and-swiglu.html">SwiGLU</a> MLP (3 linears)</div>
+  </div>
+
+  <p>Plus one inference-time addition that GPT-2 doesn't strictly need but is essential at any production scale: <strong><a href="#grouped-query-attention">grouped-query attention</a></strong> (GQA).</p>
+
+  <p>Each of these is a small change; together they define the "modern" LLM architecture (Llama 2, Llama 3, Mistral, Gemma, Qwen, etc. all use this shape).</p>
+
+  <h2><code>model.py</code>: Llama 2 in PyTorch</h2>
+
+  <p>A clean PyTorch implementation. Key classes:</p>
+
+  <dl>
+    <dt><code>RMSNorm</code></dt>
+    <dd>see <a href="../layernorm-vs-rmsnorm.html">layernorm-vs-rmsnorm</a>.</dd>
+
+    <dt><code>precompute_freqs_cis(dim, end, theta=10000)</code></dt>
+    <dd>precomputes the cos/sin tables for <a href="../rope.html">RoPE</a>.</dd>
+
+    <dt><code>apply_rotary_emb(xq, xk, freqs_cos, freqs_sin)</code></dt>
+    <dd>applies the 2D rotation to Q and K vectors.</dd>
+
+    <dt><code>Attention</code></dt>
+    <dd>multi-head attention with grouped KV heads.</dd>
+
+    <dt><code>FeedForward</code></dt>
+    <dd>SwiGLU MLP with 3 linears and the 2/3 hidden-dim trick.</dd>
+
+    <dt><code>TransformerBlock</code></dt>
+    <dd>pre-norm with RMSNorm.</dd>
+
+    <dt><code>Transformer</code></dt>
+    <dd>full model, with <a href="../weight-tying.html">weight tying</a> (<code>tok_embeddings.weight = output.weight</code>).</dd>
+  </dl>
+
+  <p>The model also includes <a href="../weight-init.html">scaled init</a> for <code>w3.weight</code> and <code>wo.weight</code> — the SwiGLU value projection and the attention output projection. Same scaling as nanoGPT, applied to the Llama-equivalent projections.</p>
+
+  <h2 id="grouped-query-attention">Grouped-query attention</h2>
+
+  <p>In standard multi-head attention, you have <code>n_head</code> query, key, and value heads — same number of each. Llama 2 (and most modern LLMs) decouples this: <code>n_heads</code> query heads but <code>n_kv_heads ≤ n_heads</code> key/value heads. Each KV head is shared across multiple query heads via <code>repeat_kv</code>:</p>
+
+  <pre><code># from llama2.c/model.py
+def repeat_kv(x: torch.Tensor, n_rep: int) -&gt; torch.Tensor:
+    """torch.repeat_interleave(x, dim=2, repeats=n_rep)"""
+    bs, slen, n_kv_heads, head_dim = x.shape
+    if n_rep == 1:
+        return x
+    return (
+        x[:, :, :, None, :]
+        .expand(bs, slen, n_kv_heads, n_rep, head_dim)
+        .reshape(bs, slen, n_kv_heads * n_rep, head_dim)
+    )</code></pre>
+
+  <div class="callout callout--note">
+    <p><strong>Why?</strong> The <a href="../kv-cache.html">KV cache</a> size scales with <code>n_kv_heads * head_dim</code>, not <code>n_heads * head_dim</code>. Cutting <code>n_kv_heads</code> by 4× cuts the KV cache by 4×, which means 4× more sequences fit on one GPU at inference. Llama 2 70B uses <code>n_heads=64, n_kv_heads=8</code> — 8× compression on the cache.</p>
+  </div>
+
+  <p>In small Llama 2 models (7B), <code>n_kv_heads = n_heads</code> (no GQA, plain multi-head). In larger models, GQA kicks in.</p>
+
+  <h2><code>run.c</code>: pure C inference</h2>
+
+  <p>The whole inference loop in C with no dependencies beyond libc and <code>mmap</code>. Structure:</p>
+
+  <dl>
+    <dt><code>Config</code></dt>
+    <dd>model hyperparameters (dim, n_layers, n_heads, etc.)</dd>
+
+    <dt><code>TransformerWeights</code></dt>
+    <dd>pointers into the mmap'd weight file</dd>
+
+    <dt><code>RunState</code></dt>
+    <dd>scratch buffers + <a href="../kv-cache.html">KV cache</a></dd>
+
+    <dt><code>forward(transformer, token, pos)</code></dt>
+    <dd>one transformer forward pass for one position</dd>
+
+    <dt><code>sample(sampler, logits)</code></dt>
+    <dd><a href="../sampling.html">top-p / top-k / greedy sampling</a> in C</dd>
+
+    <dt><code>generate(transformer, tokenizer, sampler, prompt, steps)</code></dt>
+    <dd>autoregressive loop</dd>
+  </dl>
+
+  <p>The forward pass is just <code>n_layers</code> rounds of the same thing:</p>
+
+  <div class="forward-flow">
+    <span class="forward-flow__step">RMSNorm</span>
+    <span class="forward-flow__arrow">→</span>
+    <span class="forward-flow__step">QKV matmul</span>
+    <span class="forward-flow__arrow">→</span>
+    <span class="forward-flow__step">RoPE</span>
+    <span class="forward-flow__arrow">→</span>
+    <span class="forward-flow__step">KV cache update</span>
+    <span class="forward-flow__arrow">→</span>
+    <span class="forward-flow__step">attention scores</span>
+    <span class="forward-flow__arrow">→</span>
+    <span class="forward-flow__step">softmax</span>
+    <span class="forward-flow__arrow">→</span>
+    <span class="forward-flow__step">V aggregation</span>
+    <span class="forward-flow__arrow">→</span>
+    <span class="forward-flow__step">output proj</span>
+    <span class="forward-flow__arrow">→</span>
+    <span class="forward-flow__step">residual add</span>
+    <span class="forward-flow__arrow">→</span>
+    <span class="forward-flow__step">RMSNorm</span>
+    <span class="forward-flow__arrow">→</span>
+    <span class="forward-flow__step">SwiGLU</span>
+    <span class="forward-flow__arrow">→</span>
+    <span class="forward-flow__step">residual add</span>
+  </div>
+
+  <figure>
+    <div class="card">
+      <div class="perf-row">
+        <span class="perf-row__label">M1 MacBook Air, <code>./run stories15M.bin</code></span>
+        <span class="perf-row__value">~110 tok/s</span>
+      </div>
+      <div class="perf-row">
+        <span class="perf-row__label">With <code>-O3</code> and OpenMP</span>
+        <span class="perf-row__value">~700 tok/s</span>
+      </div>
+    </div>
+    <figcaption>The 110M model is interactive on a laptop with no GPU.</figcaption>
+  </figure>
+
+  <h2>TinyStories and small-domain LLMs</h2>
+
+  <p>The included models (<code>stories15M.bin</code>, <code>stories42M.bin</code>, <code>stories110M.bin</code>) are trained on <strong>TinyStories</strong> — a synthetic dataset of simple short stories generated by GPT-3.5 to teach narrow but coherent storytelling. Karpathy's small Llama 2 models can generate paragraphs that are essentially indistinguishable from human-written children's stories:</p>
+
+  <blockquote>
+    <p>Once upon a time, there was a little girl named Lily. She loved playing with her toys on top of her bed. One day, she decided to have a tea party with her stuffed animals...</p>
+  </blockquote>
+
+  <div class="callout">
+    <p>The deeper lesson: a 15M-parameter model trained on a narrow, well-curated corpus can be more useful in its domain than a 1B-parameter generalist model. This is the case for <strong>narrow LLMs</strong>: if you can scope a problem tightly, you don't need a frontier model.</p>
+  </div>
+
+  <h2>Quantization</h2>
+
+  <p><code>runq.c</code> is a separate, ~int8-quantized version of the inference engine. Weights are stored in int8 with per-row scale factors; matmuls dequantize on the fly. Cuts the model size 4×, fits bigger models in less RAM, runs nearly as fast.</p>
+
+  <p>This is a "real" quantization implementation (group-wise int8) you can read end to end. The PyTorch-side quantization happens in <code>export.py</code>.</p>
+
+  <h2>Related</h2>
+
+  <ul>
+    <li><a href="../layernorm-vs-rmsnorm.html">layernorm-vs-rmsnorm</a>, <a href="../rope.html">rope</a>, <a href="../gelu-and-swiglu.html">gelu-and-swiglu</a> — the architectural differences</li>
+    <li><a href="../kv-cache.html">kv-cache</a> — central to inference</li>
+    <li><a href="../sampling.html">sampling</a> — top-p in run.c</li>
+    <li><a href="../weight-tying.html">weight-tying</a> — Llama also ties</li>
+    <li><a href="llm-c.html">repos/llm-c</a> — pure-C/CUDA for training, sibling of llama2.c</li>
+  </ul>
+</article>
+
+
+</main>
+</body>
+</html>

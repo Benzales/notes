@@ -1,0 +1,1005 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' data:; script-src 'none'; object-src 'none'; base-uri 'self'; frame-ancestors 'self';">
+<title>build-nanogpt</title>
+<style>
+/*
+ * md-to-redesigned-html default theme
+ * Linear / Vercel docs lineage. Sharp, modern, technical, calm-precise.
+ *
+ * Three layers, three different contracts with the LLM:
+ *
+ *   1. TOKENS (color, type, spacing, radii) — the shared visual language. Every
+ *      page should reference them. This is what makes a folder of notes feel like
+ *      one site. HARD contract: the render prompt instructs Claude to use these.
+ *
+ *   2. BASE STYLES (h1-h6, p, ul, table, code, details, ...) — every standard
+ *      HTML element is styled regardless of class. Pure semantic HTML still looks
+ *      decent. No special opt-in.
+ *
+ *   3. NAMED PATTERNS (.callout, .eyebrow, .index-card, .page--with-toc, ...) —
+ *      pre-baked moves for common shapes. SUGGESTIONS, not rules. The LLM is free
+ *      to invent: per-page <style> blocks and inline styles referencing tokens are
+ *      both encouraged. Coherence comes from tokens, not from class-name policing.
+ *
+ * Edit pattern names with care (they're referenced by the render prompt). Edit
+ * tokens deliberately (they're the entire visual contract).
+ */
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Tokens
+   ────────────────────────────────────────────────────────────────────────── */
+:root {
+  color-scheme: light dark;
+
+  /* Color — light (zinc ramp + violet accent) */
+  --bg:            #ffffff;
+  --bg-elev:       #fafafa;
+  --bg-code:       #f4f4f5;
+  --fg:            #18181b;
+  --fg-secondary:  #3f3f46;
+  --fg-muted:      #71717a;
+  --rule:          #e4e4e7;
+  --rule-strong:   #d4d4d8;
+  --accent:        #6d28d9;
+  --accent-fg:     #ffffff;
+  --accent-soft:   #faf5ff;
+  --accent-rule:   #c4b5fd;
+  --good:          #15803d;
+  --bad:           #b91c1c;
+  --warn:          #b45309;
+
+  /* Type stacks */
+  --font-sans: "Inter", "Geist Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* Type scale (anchored at 15px body) */
+  --text-3xs:  0.6875rem; /* 11 — micro-labels */
+  --text-2xs:  0.75rem;   /* 12 */
+  --text-xs:   0.8125rem; /* 13 */
+  --text-sm:   0.875rem;  /* 14 */
+  --text-base: 0.9375rem; /* 15 — body */
+  --text-md:   1rem;      /* 16 */
+  --text-lg:   1.125rem;  /* 18 */
+  --text-xl:   1.375rem;  /* 22 — h2 */
+  --text-2xl:  1.75rem;   /* 28 — h1 alt */
+  --text-3xl:  2rem;      /* 32 — h1 */
+
+  --leading-tight:   1.2;
+  --leading-snug:    1.35;
+  --leading-base:    1.55;
+  --leading-relaxed: 1.65;
+
+  --tracking-tight:  -0.015em;
+  --tracking-base:   0;
+  --tracking-wide:   0.06em;
+
+  /* Spacing (4px scale) */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 2.5rem;
+  --space-8: 3rem;
+  --space-10: 4rem;
+  --space-12: 5rem;
+
+  /* Layout */
+  --content-width: 680px;
+  --page-width:    1080px;
+  --sidebar-width: 220px;
+  --aside-width:   240px;
+
+  /* Radii — sharp; ≤4px per design doc */
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 6px; /* reserved for larger cards if needed */
+
+  --border: 1px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:            #09090b;
+    --bg-elev:       #18181b;
+    --bg-code:       #18181b;
+    --fg:            #fafafa;
+    --fg-secondary:  #d4d4d8;
+    --fg-muted:      #a1a1aa;
+    --rule:          #27272a;
+    --rule-strong:   #3f3f46;
+    --accent:        #a78bfa;
+    --accent-fg:     #18181b;
+    --accent-soft:   #1e1631;
+    --accent-rule:   #5b21b6;
+    --good:          #4ade80;
+    --bad:           #fca5a5;
+    --warn:          #fbbf24;
+  }
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Reset
+   ────────────────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+* { margin: 0; padding: 0; }
+html { -webkit-text-size-adjust: 100%; tab-size: 4; }
+body { min-height: 100vh; }
+img, picture, video, canvas, svg { display: block; max-width: 100%; }
+input, button, textarea, select { font: inherit; color: inherit; }
+button { background: none; border: none; cursor: pointer; }
+p, h1, h2, h3, h4, h5, h6 { overflow-wrap: break-word; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-sm); }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Base
+   ────────────────────────────────────────────────────────────────────────── */
+html {
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: var(--leading-base);
+  color: var(--fg);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "cv11", "ss01", "ss03"; /* Inter stylistic sets — gracefully ignored elsewhere */
+}
+
+body {
+  font-size: var(--text-base);
+  color: var(--fg-secondary);
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Typography
+   ────────────────────────────────────────────────────────────────────────── */
+h1, h2, h3, h4, h5, h6 {
+  color: var(--fg);
+  font-weight: 600;
+  letter-spacing: var(--tracking-tight);
+  line-height: var(--leading-tight);
+  scroll-margin-top: var(--space-6);
+}
+h1 { font-size: var(--text-3xl); margin-bottom: var(--space-4); }
+h2 { font-size: var(--text-xl); margin: var(--space-7) 0 var(--space-3); }
+h3 { font-size: var(--text-lg); margin: var(--space-5) 0 var(--space-2); }
+h4 { font-size: var(--text-md); margin: var(--space-4) 0 var(--space-2); }
+h5 { font-size: var(--text-base); margin: var(--space-4) 0 var(--space-2); }
+h6 {
+  font-size: var(--text-3xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  margin: var(--space-4) 0 var(--space-2);
+}
+
+p { margin-bottom: var(--space-3); max-width: var(--content-width); }
+p:last-child { margin-bottom: 0; }
+
+small { font-size: var(--text-xs); color: var(--fg-muted); }
+strong { color: var(--fg); font-weight: 600; }
+em { font-style: italic; }
+mark {
+  background: var(--accent-soft);
+  color: var(--fg);
+  padding: 0 0.2em;
+  border-radius: var(--radius-sm);
+}
+abbr[title] {
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  cursor: help;
+}
+
+ul, ol {
+  margin: 0 0 var(--space-3);
+  padding-left: var(--space-5);
+  max-width: var(--content-width);
+}
+ul { list-style: disc; }
+ol { list-style: decimal; }
+li { margin-bottom: var(--space-1); }
+li > ul, li > ol { margin-top: var(--space-1); margin-bottom: 0; }
+
+dl { margin: 0 0 var(--space-3); max-width: var(--content-width); }
+dt { color: var(--fg); font-weight: 600; margin-top: var(--space-3); }
+dd { margin-left: var(--space-4); color: var(--fg-secondary); }
+
+blockquote {
+  margin: var(--space-4) 0;
+  padding: var(--space-1) var(--space-4);
+  border-left: 2px solid var(--rule-strong);
+  color: var(--fg-secondary);
+  font-style: normal;
+  max-width: var(--content-width);
+}
+blockquote > p:last-child { margin-bottom: 0; }
+
+hr {
+  border: none;
+  border-top: 1px solid var(--rule);
+  margin: var(--space-6) 0;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Inline code + pre
+   ────────────────────────────────────────────────────────────────────────── */
+code {
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  background: var(--bg-code);
+  color: var(--fg);
+  padding: 0.1em 0.35em;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--rule);
+}
+
+pre {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  background: var(--bg-code);
+  color: var(--fg);
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--rule);
+  overflow-x: auto;
+  margin: var(--space-4) 0;
+  max-width: 100%;
+}
+pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+  color: inherit;
+}
+
+kbd {
+  font-family: var(--font-mono);
+  font-size: 0.75em;
+  background: var(--bg-elev);
+  color: var(--fg);
+  padding: 0.15em 0.4em;
+  border: 1px solid var(--rule-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Links
+   ────────────────────────────────────────────────────────────────────────── */
+a {
+  color: var(--accent);
+  text-decoration: none;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+a:hover { text-decoration: underline; }
+a.muted { color: var(--fg-secondary); }
+a.muted:hover { color: var(--fg); }
+a.ext::after { content: " ↗"; color: var(--fg-muted); font-size: 0.85em; }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Tables
+   ────────────────────────────────────────────────────────────────────────── */
+table {
+  border-collapse: collapse;
+  width: 100%;
+  max-width: var(--content-width);
+  margin: var(--space-4) 0;
+  font-size: var(--text-sm);
+}
+th, td {
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+}
+th {
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  color: var(--fg-muted);
+  font-weight: 600;
+  border-bottom-color: var(--rule-strong);
+}
+tbody tr:last-child td { border-bottom: none; }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Component primitives — the LLM composes against these
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* Eyebrow: a micro-label above a heading. e.g. "GUIDE" / "REFERENCE" */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  color: var(--fg-muted);
+  margin-bottom: var(--space-2);
+  display: inline-block;
+}
+
+/* Lede: the first paragraph after h1, slightly larger */
+.lede {
+  font-size: var(--text-md);
+  color: var(--fg-secondary);
+  margin-bottom: var(--space-5);
+  max-width: var(--content-width);
+  line-height: var(--leading-relaxed);
+}
+
+/* Callout: bordered block with a colored left rule. */
+.callout {
+  background: var(--bg-elev);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  margin: var(--space-4) 0;
+  max-width: var(--content-width);
+  font-size: var(--text-sm);
+}
+.callout > :last-child { margin-bottom: 0; }
+.callout--note    { border-left-color: var(--accent); }
+.callout--good    { border-left-color: var(--good);  background: color-mix(in srgb, var(--good) 5%, var(--bg-elev)); }
+.callout--warn    { border-left-color: var(--warn);  background: color-mix(in srgb, var(--warn) 6%, var(--bg-elev)); }
+.callout--bad     { border-left-color: var(--bad);   background: color-mix(in srgb, var(--bad) 5%, var(--bg-elev)); }
+.callout strong { color: var(--fg); }
+
+/* Card: bordered surface for grouped content (e.g. index entries) */
+.card {
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  transition: border-color 120ms ease;
+}
+a.card:hover, .card:hover { border-color: var(--rule-strong); }
+.card h2, .card h3 { margin-top: 0; }
+
+/* Tag chip: free-form taxonomy from the LLM */
+.tag {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  color: var(--fg-muted);
+  background: var(--bg-elev);
+  border: 1px solid var(--rule);
+  padding: 0.1em 0.45em;
+  border-radius: var(--radius-sm);
+  text-transform: lowercase;
+  letter-spacing: 0;
+}
+.tag + .tag { margin-left: var(--space-1); }
+a.tag:hover { color: var(--fg); border-color: var(--rule-strong); }
+
+/* Badge: status / category indicator (more prominent than .tag) */
+.badge {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  padding: 0.15em 0.5em;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid var(--accent-rule);
+}
+
+/* Term: glossary term inline */
+.term {
+  border-bottom: 1px dotted var(--accent-rule);
+  color: var(--fg);
+  cursor: help;
+}
+
+/* Native details — collapsibles */
+details {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  margin: var(--space-3) 0;
+  max-width: var(--content-width);
+  background: var(--bg);
+  overflow: hidden;
+}
+details summary {
+  list-style: none;
+  cursor: pointer;
+  padding: var(--space-3) var(--space-4);
+  color: var(--fg);
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+details summary::-webkit-details-marker { display: none; }
+details summary::before {
+  content: "›";
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  display: inline-block;
+  transition: transform 120ms ease;
+  font-size: 1.1em;
+  line-height: 1;
+}
+details[open] summary::before { transform: rotate(90deg); }
+details > :not(summary) {
+  padding: 0 var(--space-4) var(--space-3);
+}
+
+/* Figure + caption */
+figure { margin: var(--space-4) 0; max-width: var(--content-width); }
+figcaption {
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+  margin-top: var(--space-2);
+  text-align: left;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Layout primitives
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* .page: a generous single-column page wrapper with default padding */
+.page {
+  max-width: var(--page-width);
+  margin: 0 auto;
+  padding: var(--space-8) var(--space-5) var(--space-12);
+}
+
+/* .page--with-aside: main content + sticky aside grid */
+.page--with-aside {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--aside-width);
+  gap: var(--space-7);
+}
+.page--with-aside > aside {
+  position: sticky;
+  top: var(--space-6);
+  align-self: start;
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+}
+@media (max-width: 880px) {
+  .page--with-aside { grid-template-columns: 1fr; }
+  .page--with-aside > aside { position: static; }
+}
+
+/* .page--with-toc: sticky TOC on the LEFT */
+.page--with-toc {
+  display: grid;
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  gap: var(--space-7);
+}
+.page--with-toc > nav {
+  position: sticky;
+  top: var(--space-6);
+  align-self: start;
+  font-size: var(--text-xs);
+}
+.page--with-toc > nav a {
+  display: block;
+  padding: var(--space-1) 0 var(--space-1) var(--space-3);
+  border-left: 1px solid var(--rule);
+  color: var(--fg-muted);
+}
+.page--with-toc > nav a:hover, .page--with-toc > nav a[aria-current="page"] {
+  color: var(--fg);
+  border-left-color: var(--accent);
+}
+@media (max-width: 880px) {
+  .page--with-toc { grid-template-columns: 1fr; }
+  .page--with-toc > nav { display: none; }
+}
+
+/* article: the content body */
+article { max-width: var(--content-width); }
+article > * + h2 { margin-top: var(--space-7); }
+article > * + h3 { margin-top: var(--space-5); }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Index page — the hub
+   ────────────────────────────────────────────────────────────────────────── */
+.index-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--space-4);
+  margin: var(--space-5) 0;
+  max-width: 100%;
+}
+.index-card {
+  display: block;
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  color: var(--fg-secondary);
+  transition: border-color 120ms ease, transform 120ms ease;
+}
+.index-card:hover { border-color: var(--rule-strong); text-decoration: none; }
+.index-card h3 {
+  font-size: var(--text-md);
+  margin: 0 0 var(--space-2);
+  color: var(--fg);
+}
+.index-card p {
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+  margin-bottom: var(--space-3);
+  line-height: var(--leading-snug);
+}
+.index-card .tags { margin-top: auto; }
+
+/* Filter bar — for tag-driven grouping on index */
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin: var(--space-4) 0;
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--rule);
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Utilities
+   ────────────────────────────────────────────────────────────────────────── */
+.muted { color: var(--fg-muted); }
+.mono  { font-family: var(--font-mono); }
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0);
+  white-space: nowrap; border: 0;
+}
+
+</style>
+</head>
+<body>
+<main class="page">
+
+<style>
+  .opt-list {
+    list-style: none;
+    padding-left: 0;
+    margin: var(--space-4) 0;
+    max-width: var(--content-width);
+    counter-reset: opt;
+  }
+  .opt-list > li {
+    display: grid;
+    grid-template-columns: 2rem 1fr;
+    gap: var(--space-3);
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid var(--rule);
+    counter-increment: opt;
+    margin-bottom: 0;
+  }
+  .opt-list > li:last-child { border-bottom: none; }
+  .opt-list > li::before {
+    content: counter(opt, decimal-leading-zero);
+    font-family: var(--font-mono);
+    font-size: var(--text-2xs);
+    color: var(--fg-muted);
+    padding-top: 0.15em;
+    letter-spacing: var(--tracking-wide);
+  }
+  .opt-list strong { display: block; margin-bottom: var(--space-1); }
+
+  .file-tree {
+    margin: var(--space-4) 0;
+    max-width: var(--content-width);
+    border: 1px solid var(--rule);
+    border-radius: var(--radius-md);
+    background: var(--bg-elev);
+    overflow: hidden;
+  }
+  .file-tree table {
+    width: 100%;
+    margin: 0;
+    font-size: var(--text-sm);
+  }
+  .file-tree td {
+    padding: var(--space-2) var(--space-4);
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+  }
+  .file-tree tr:last-child td { border-bottom: none; }
+  .file-tree td:first-child {
+    font-family: var(--font-mono);
+    color: var(--fg);
+    white-space: nowrap;
+    width: 1%;
+  }
+  .file-tree td:nth-child(2) {
+    font-family: var(--font-mono);
+    color: var(--fg-muted);
+    font-size: var(--text-xs);
+    white-space: nowrap;
+    width: 1%;
+  }
+  .file-tree td:last-child { color: var(--fg-secondary); }
+
+  .stat-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: var(--space-3);
+    margin: var(--space-4) 0;
+    max-width: var(--content-width);
+  }
+  .stat {
+    border: 1px solid var(--rule);
+    border-radius: var(--radius-md);
+    padding: var(--space-3) var(--space-4);
+    background: var(--bg-elev);
+  }
+  .stat-label {
+    font-family: var(--font-mono);
+    font-size: var(--text-3xs);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    color: var(--fg-muted);
+    margin-bottom: var(--space-1);
+  }
+  .stat-value {
+    font-family: var(--font-mono);
+    font-size: var(--text-md);
+    color: var(--fg);
+  }
+
+  .pipeline {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    margin: var(--space-4) 0;
+    max-width: var(--content-width);
+    font-size: var(--text-xs);
+  }
+  .pipeline-step {
+    font-family: var(--font-mono);
+    background: var(--bg-elev);
+    border: 1px solid var(--rule);
+    border-radius: var(--radius-sm);
+    padding: var(--space-1) var(--space-2);
+    color: var(--fg);
+  }
+  .pipeline-arrow {
+    color: var(--fg-muted);
+    font-family: var(--font-mono);
+  }
+
+  .split {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-4);
+    margin: var(--space-4) 0;
+    max-width: var(--content-width);
+  }
+  @media (max-width: 640px) { .split { grid-template-columns: 1fr; } }
+  .split .card h3 {
+    font-size: var(--text-base);
+    font-family: var(--font-mono);
+    color: var(--fg-muted);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    margin-bottom: var(--space-2);
+  }
+</style>
+<article>
+
+  <span class="eyebrow">Repo · zero-to-hero · lecture 10</span>
+  <h1>build-nanogpt</h1>
+  <p class="lede">
+    The companion repo for <a href="../zero-to-hero-arc.html">lecture 10, "Let's reproduce GPT-2 (124M)."</a>
+    Takes <a href="nanoGPT.html">nanoGPT</a> and walks through every optimization that goes into
+    actually reproducing GPT-2 faithfully on modern hardware. The <code>play.ipynb</code> notebook in
+    the repo is the lecture's working artifact; <code>train_gpt2.py</code> is the cleaned-up training script.
+  </p>
+
+  <div>
+    <span class="tag">repo</span>
+    <span class="tag">gpt-2</span>
+    <span class="tag">reproduction</span>
+    <span class="tag">karpathy</span>
+  </div>
+
+  <h2>What's in the repo</h2>
+
+  <div class="file-tree">
+    <table>
+      <tbody>
+        <tr>
+          <td>README.md</td>
+          <td></td>
+          <td></td>
+        </tr>
+        <tr>
+          <td>train_gpt2.py</td>
+          <td>521 lines</td>
+          <td>the full training script</td>
+        </tr>
+        <tr>
+          <td>play.ipynb</td>
+          <td></td>
+          <td>the working notebook from the lecture</td>
+        </tr>
+        <tr>
+          <td>fineweb.py</td>
+          <td></td>
+          <td>dataset preprocessor: HuggingFace fineweb-edu → token shards</td>
+        </tr>
+        <tr>
+          <td>hellaswag.py</td>
+          <td></td>
+          <td>HellaSwag eval rendering</td>
+        </tr>
+        <tr>
+          <td>input.txt</td>
+          <td></td>
+          <td>Tiny Shakespeare (a fallback)</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    The full reproduction targets a 6-hour wall-clock on 8×A100 to reach GPT-3 paper's
+    HellaSwag accuracy. The cost on Lambda Cloud was about $10 of compute at the time of recording.
+  </p>
+
+  <div class="stat-row">
+    <div class="stat">
+      <div class="stat-label">Wall-clock</div>
+      <div class="stat-value">~6 hours</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Hardware</div>
+      <div class="stat-value">8×A100</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Cloud cost</div>
+      <div class="stat-value">~$10</div>
+    </div>
+  </div>
+
+  <h2>The lecture this comes from</h2>
+
+  <p>
+    <a href="../zero-to-hero-arc.html">Lecture 10, "Let's reproduce GPT-2 (124M)"</a>, is the longest
+    in the series (~4 hours). It's structured as a series of optimizations to a baseline:
+  </p>
+
+  <ol class="opt-list">
+    <li>
+      <div>
+        <strong>Start from a minimal model.</strong>
+        Same as <a href="nanoGPT.html">nanoGPT</a>.
+      </div>
+    </li>
+    <li>
+      <div>
+        <strong>Add the GPT-2 specific details.</strong>
+        Learned init <code>std=0.02</code>, scaled init for residual projections,
+        <code>tanh</code> GELU approximation, AdamW with <code>betas=(0.9, 0.95)</code>,
+        selective weight decay.
+      </div>
+    </li>
+    <li>
+      <div>
+        <strong>Optimize the data pipeline.</strong>
+        <code>DataLoaderLite</code> over <code>.npy</code> shards instead of in-memory tensors.
+        See <a href="../dataloader.html">dataloader</a>.
+      </div>
+    </li>
+    <li>
+      <div>
+        <strong>Switch to FineWeb-Edu.</strong>
+        The high-quality 10B-token subset. <code>fineweb.py</code> downloads and tokenizes.
+      </div>
+    </li>
+    <li>
+      <div>
+        <strong>Use bfloat16 autocast and TF32 matmuls.</strong>
+        <a href="../mixed-precision-and-mfu.html">Mixed precision</a> gets ~5-10× speedup over fp32.
+      </div>
+    </li>
+    <li>
+      <div>
+        <strong>torch.compile.</strong>
+        Graph-mode execution. Another ~30% speedup.
+      </div>
+    </li>
+    <li>
+      <div>
+        <strong>Flash attention via <code>scaled_dot_product_attention</code>.</strong>
+        Memory and speed.
+      </div>
+    </li>
+    <li>
+      <div>
+        <strong>Vocab padding to multiple of 64.</strong>
+        <code>vocab_size=50304</code> (50257 padded). Aligns matmuls to nice multiples for tensor cores.
+      </div>
+    </li>
+    <li>
+      <div>
+        <strong>DDP.</strong>
+        Distribute across the 8 GPUs.
+      </div>
+    </li>
+    <li>
+      <div>
+        <strong>Gradient accumulation.</strong>
+        Hit the target 524288-token batch size.
+      </div>
+    </li>
+    <li>
+      <div>
+        <strong>Cosine LR schedule with warmup, gradient clipping.</strong>
+      </div>
+    </li>
+    <li>
+      <div>
+        <strong>HellaSwag eval.</strong>
+        Verify the trained model on a real downstream eval.
+      </div>
+    </li>
+  </ol>
+
+  <p>
+    Each step is shown to improve either loss or throughput. By the end, the script reproduces
+    GPT-3 paper's HellaSwag accuracy in one ~6-hour run.
+  </p>
+
+  <h2>What's in <code>train_gpt2.py</code></h2>
+
+  <p>
+    The model code (the first ~200 lines) is almost identical to
+    <a href="nanoGPT.html"><code>nanoGPT/model.py</code></a>, with a few faithfulness tweaks:
+  </p>
+
+  <ul>
+    <li><code>nn.GELU(approximate='tanh')</code> instead of plain <code>nn.GELU</code>.</li>
+    <li><code>NANOGPT_SCALE_INIT</code> marker on residual projections for <a href="../weight-init.html">scaled init</a>.</li>
+    <li><code>vocab_size=50257</code> in the config (and <code>50304</code> at model construction for padding).</li>
+    <li><code>bias=True</code> everywhere by default (GPT-2 had biases).</li>
+  </ul>
+
+  <p>
+    The training loop (the last ~300 lines) is where the lecture-driven optimizations live:
+  </p>
+
+  <ul>
+    <li><code>DataLoaderLite</code> reading sharded <code>.npy</code> token files.</li>
+    <li><code>torch.set_float32_matmul_precision('high')</code> for TF32 matmuls.</li>
+    <li><code>with torch.autocast(device_type=device_type, dtype=torch.bfloat16):</code> around the forward.</li>
+    <li><code>grad_accum_steps = total_batch_size // (B * T * ddp_world_size)</code> — see <a href="../gradient-accumulation.html">gradient-accumulation</a>.</li>
+    <li><code>get_lr(it)</code> — <a href="../learning-rate-schedules.html">cosine schedule with linear warmup</a>.</li>
+    <li><code>clip_grad_norm_(model.parameters(), 1.0)</code> — <a href="../training-stability.html">training stability</a>.</li>
+    <li>Periodic validation loss, <a href="../hellaswag-eval.html">HellaSwag eval</a>, and sample generation every 250 steps.</li>
+    <li>DDP setup with <code>init_process_group(backend='nccl')</code>.</li>
+  </ul>
+
+  <p>The full code is dense but readable. Every line is purposeful.</p>
+
+  <h2><code>fineweb.py</code> — the data prep</h2>
+
+  <p>
+    The training corpus is a 10B-token subset of <strong>FineWeb-Edu</strong>, an
+    HuggingFace-curated educational subset of the FineWeb web crawl.
+  </p>
+
+  <div class="pipeline">
+    <span class="pipeline-step">fineweb-edu sample-10BT</span>
+    <span class="pipeline-arrow">→</span>
+    <span class="pipeline-step">tiktoken gpt2</span>
+    <span class="pipeline-arrow">→</span>
+    <span class="pipeline-step">np.uint16 shards</span>
+    <span class="pipeline-arrow">→</span>
+    <span class="pipeline-step">np.load</span>
+  </div>
+
+  <p><code>fineweb.py</code>:</p>
+
+  <ol>
+    <li>Streams the dataset via <code>datasets.load_dataset("HuggingFaceFW/fineweb-edu", "sample-10BT")</code>.</li>
+    <li>Tokenizes each document with <code>tiktoken.get_encoding("gpt2")</code>, prepends an <code>&lt;|endoftext|&gt;</code> token.</li>
+    <li>Writes tokens to shard files of 100M tokens each, as <code>np.uint16</code> arrays (token IDs fit in 16 bits since vocab_size &lt; 65536).</li>
+    <li>First shard is <code>val</code>, remaining shards are <code>train</code>.</li>
+  </ol>
+
+  <div class="split">
+    <div class="card">
+      <h3>Shards</h3>
+      <p style="margin-bottom:0">100 files, 100M tokens each</p>
+    </div>
+    <div class="card">
+      <h3>On disk</h3>
+      <p style="margin-bottom:0">~20GB total</p>
+    </div>
+  </div>
+
+  <p>The training script just <code>np.load</code>s them in order.</p>
+
+  <h2>HellaSwag eval</h2>
+
+  <p>
+    <code>hellaswag.py</code> provides the eval logic. HellaSwag is a multiple-choice commonsense
+    reasoning benchmark: each example has a context and four possible completions, exactly one of
+    which is human-written. The eval scores the model by picking the completion with the lowest
+    average per-token loss (the model's most likely choice).
+  </p>
+
+  <figure>
+<pre><code># from train_gpt2.py
+def get_most_likely_row(tokens, mask, logits):
+    # evaluate the autoregressive loss at all positions
+    # ... compute per-completion-region loss ...
+    pred_norm = avg_loss.argmin().item()
+    return pred_norm</code></pre>
+    <figcaption>The scoring core: argmin over per-completion average loss.</figcaption>
+  </figure>
+
+  <p>
+    This is the standard way LLMs are evaluated on multiple-choice benchmarks: score every option
+    by perplexity, pick the lowest. The lecture reaches the GPT-3 paper's reported
+    <strong>0.29 accuracy</strong> on HellaSwag.
+  </p>
+
+  <h2>Why this lecture matters</h2>
+
+  <div class="callout callout--note">
+    <p>
+      There are dozens of "build a GPT" tutorials online. Most produce a small model that "works"
+      on Tiny Shakespeare and stop there. Karpathy's reproduction is one of the only ones that
+      goes the whole way: real data, real hyperparameters, real eval, and lands inside the GPT-3
+      paper's reported numbers on a real benchmark.
+    </p>
+  </div>
+
+  <p>
+    The reason it ends here in the lecture series (lecture 10) is that there's nothing more to add
+    at the 124M scale — you've reproduced GPT-2. Going further means scaling up, which is
+    mostly engineering, not new ideas.
+  </p>
+
+  <h2>Related</h2>
+
+  <dl>
+    <dt><a href="nanoGPT.html">repos/nanoGPT</a></dt>
+    <dd>The predecessor this builds on.</dd>
+    <dt><a href="../zero-to-hero-arc.html">zero-to-hero-arc</a></dt>
+    <dd>Lecture 10.</dd>
+    <dt>Concept pages</dt>
+    <dd>
+      <a href="../adamw.html">adamw</a> ·
+      <a href="../learning-rate-schedules.html">learning-rate-schedules</a> ·
+      <a href="../mixed-precision-and-mfu.html">mixed-precision-and-mfu</a> ·
+      <a href="../gradient-accumulation.html">gradient-accumulation</a> ·
+      <a href="../training-stability.html">training-stability</a> ·
+      <a href="../weight-init.html">weight-init</a> ·
+      <a href="../dataloader.html">dataloader</a> ·
+      <a href="../hellaswag-eval.html">hellaswag-eval</a>
+    </dd>
+  </dl>
+
+</article>
+
+
+</main>
+</body>
+</html>
